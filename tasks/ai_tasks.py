@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 @celery.task(bind=True, name='tasks.ai_tasks.process_ai_message')
-def process_ai_message(self, user_id, channel_id, text, prompt_type='professional', user_token=None):
+def process_ai_message(self, user_id, channel_id, text, prompt_type='professional', user_token=None, custom_prompt_id=None, thread_info=None):
     """
     AI 메시지 처리 태스크
     
@@ -24,6 +24,8 @@ def process_ai_message(self, user_id, channel_id, text, prompt_type='professiona
         text (str): 처리할 텍스트
         prompt_type (str): 프롬프트 타입
         user_token (str): 사용자 토큰 (사용자 명의 게시용)
+        custom_prompt_id (int): 사용자 정의 프롬프트 ID (optional)
+        thread_info (dict): 스레드 정보 (optional)
     """
     
     task_id = self.request.id
@@ -42,7 +44,7 @@ def process_ai_message(self, user_id, channel_id, text, prompt_type='professiona
         )
         
         # 2. AI 처리 (실제 OpenAI API 사용)
-        ai_result = process_with_ai(text, prompt_type)
+        ai_result = process_with_ai(text, prompt_type, custom_prompt_id, user_id)
         
         # AI 처리 실패 시 처리
         if not ai_result['success']:
@@ -70,7 +72,8 @@ def process_ai_message(self, user_id, channel_id, text, prompt_type='professiona
         success = post_message_to_slack(
             channel_id=channel_id,
             text=processed_text,
-            user_token=user_token
+            user_token=user_token,
+            thread_info=thread_info
         )
         
         # 5. 사용량 로깅 (데이터베이스)
@@ -128,7 +131,7 @@ def process_ai_message(self, user_id, channel_id, text, prompt_type='professiona
 
 
 @celery.task(bind=True, name='tasks.ai_tasks.process_ai_modal')
-def process_ai_modal(self, user_id, channel_id, text, prompt_type, user_token=None):
+def process_ai_modal(self, user_id, channel_id, text, prompt_type, user_token=None, custom_prompt_id=None, thread_info=None):
     """
     모달에서 제출된 AI 처리 태스크
     
@@ -138,22 +141,26 @@ def process_ai_modal(self, user_id, channel_id, text, prompt_type, user_token=No
         text (str): 처리할 텍스트
         prompt_type (str): 프롬프트 타입
         user_token (str): 사용자 토큰
+        custom_prompt_id (int): 사용자 정의 프롬프트 ID (optional)
+        thread_info (dict): 스레드 정보 (optional)
     """
     
     # 기본 AI 처리 태스크와 동일한 로직 사용
     return process_ai_message.apply_async(
-        args=[user_id, channel_id, text, prompt_type, user_token],
+        args=[user_id, channel_id, text, prompt_type, user_token, custom_prompt_id, thread_info],
         task_id=f"modal_{self.request.id}"
     )
 
 
-def process_with_ai(text, prompt_type):
+def process_with_ai(text, prompt_type, custom_prompt_id=None, user_id=None):
     """
     실제 AI 처리 함수
     
     Args:
         text (str): 처리할 텍스트
         prompt_type (str): 프롬프트 타입
+        custom_prompt_id (int): 사용자 정의 프롬프트 ID (optional)
+        user_id (str): 슬랙 사용자 ID (optional)
         
     Returns:
         dict: AI 처리 결과
@@ -163,7 +170,7 @@ def process_with_ai(text, prompt_type):
         from services.ai_service import ai_service
         
         # AI 서비스를 통한 텍스트 처리
-        result = ai_service.process_text(text, prompt_type)
+        result = ai_service.process_text(text, prompt_type, custom_prompt_id, user_id)
         
         # 결과 로깅
         if result['success']:
@@ -192,7 +199,7 @@ def process_with_ai(text, prompt_type):
         }
 
 
-def post_message_to_slack(channel_id, text, user_token=None):
+def post_message_to_slack(channel_id, text, user_token=None, thread_info=None):
     """
     슬랙에 메시지 게시
     
@@ -200,6 +207,7 @@ def post_message_to_slack(channel_id, text, user_token=None):
         channel_id (str): 채널 ID
         text (str): 게시할 텍스트
         user_token (str): 사용자 토큰 (없으면 봇 토큰 사용)
+        thread_info (dict): 스레드 정보 (optional)
     """
     
     try:
@@ -213,13 +221,19 @@ def post_message_to_slack(channel_id, text, user_token=None):
         # 슬랙 클라이언트 생성
         client = WebClient(token=token)
         
-        # 메시지 게시
-        response = client.chat_postMessage(
-            channel=channel_id,
-            text=text,
-            unfurl_links=False,
-            unfurl_media=False
-        )
+        # 메시지 게시 (스레드 지원)
+        post_params = {
+            'channel': channel_id,
+            'text': text,
+            'unfurl_links': False,
+            'unfurl_media': False
+        }
+        
+        # 스레드 정보가 있으면 스레드에 게시
+        if thread_info and thread_info.get('is_thread'):
+            post_params['thread_ts'] = thread_info['thread_ts']
+        
+        response = client.chat_postMessage(**post_params)
         
         if response['ok']:
             logger.info(f"메시지 게시 성공: {response['ts']}")

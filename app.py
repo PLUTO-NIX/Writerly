@@ -31,19 +31,13 @@ def create_app(config_name=None):
     # 블루프린트 등록
     from routes.slack import slack_bp
     from routes.auth import auth_bp
+    from routes.health import health_bp
     
     app.register_blueprint(slack_bp, url_prefix='/slack')
     app.register_blueprint(auth_bp, url_prefix='/auth')
+    app.register_blueprint(health_bp, url_prefix='/')
     
-    # 헬스체크 라우트
-    @app.route('/health')
-    def health_check():
-        """애플리케이션 상태 확인"""
-        return {
-            'status': 'ok',
-            'message': 'Writerly is running',
-            'version': '1.0.0'
-        }
+    # 기본 헬스체크 라우트 (health 블루프린트로 이동됨)
     
     # Celery 테스트 라우트
     @app.route('/test/celery')
