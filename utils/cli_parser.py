@@ -5,6 +5,7 @@ CLI 명령어 파싱 유틸리티
 
 import re
 import shlex
+import html
 from typing import Dict, List, Optional, Tuple
 
 
@@ -38,7 +39,24 @@ class CLIParser:
                 'error': None
             }
         
-        text = text.strip()
+        # HTML 엔티티 디코딩 (슬랙에서 &quot; 등으로 인코딩된 문자 처리)
+        original_text = text.strip()
+        
+        # 여러 단계의 디코딩 시도
+        text = html.unescape(original_text)
+        
+        # 추가적인 수동 치환 (슬랙에서 불완전한 엔티티가 올 수 있음)
+        text = text.replace('&quot;', '"')
+        text = text.replace('&quot', '"')  # 세미콜론이 없는 경우도 처리
+        text = text.replace('&amp;', '&')
+        text = text.replace('&lt;', '<')
+        text = text.replace('&gt;', '>')
+        
+        # 디버깅: 입력값 로깅
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"CLI Parser - Original text: {repr(original_text)}")
+        logger.info(f"CLI Parser - After processing: {repr(text)}")
         
         # 도움말 요청
         if text.lower() in ['help', 'h', '?', '도움말']:
@@ -73,8 +91,17 @@ class CLIParser:
     def _parse_quoted_command(self, text: str) -> Dict:
         """인용부호를 사용한 명령어 파싱"""
         try:
+            # 추가 디코딩 (shlex.split 전에 한 번 더)
+            text = text.replace('&quot;', '"').replace('&quot', '"')
+            
+            # 디버깅 로깅
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"_parse_quoted_command - Input text: {repr(text)}")
+            
             # shlex를 사용하여 인용부호 처리
             parts = shlex.split(text)
+            logger.info(f"_parse_quoted_command - Parsed parts: {parts}")
             
             if len(parts) == 2:
                 # "/ai "프롬프트명" "텍스트"" 형태
@@ -159,11 +186,17 @@ class CLIParser:
             'translate_en': '영어 번역',
             'translate_ja': '일본어 번역',
             '전문적인톤': 'professional',
+            '전문적인 톤': 'professional',
             '친근한톤': 'friendly',
+            '친근한 톤': 'friendly',
             '오탈자수정': 'fix_typos',
+            '오탈자 수정': 'fix_typos',
             '요약': 'summarize',
+            '내용 요약': 'summarize',
             '영어번역': 'translate_en',
-            '일본어번역': 'translate_ja'
+            '영어 번역': 'translate_en',
+            '일본어번역': 'translate_ja',
+            '일본어 번역': 'translate_ja'
         }
         
         # 기본 프롬프트 매칭

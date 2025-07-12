@@ -13,7 +13,7 @@ from typing import Dict, List, Any, Optional, Callable
 import hashlib
 from functools import wraps
 
-from flask import Flask, request, response, g, jsonify, abort
+from flask import Flask, request, g, jsonify, abort
 from werkzeug.middleware.profiler import ProfilerMiddleware
 import psutil
 
@@ -328,7 +328,7 @@ class APIOptimizer:
     def _record_performance_metrics(self):
         """성능 메트릭 기록"""
         
-                         try:
+        try:
             from utils.metrics import app_metrics
             
             with self.lock:

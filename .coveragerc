@@ -1,0 +1,114 @@
+[run]
+# Source code to analyze
+source = .
+
+# Include patterns
+include = 
+    app.py
+    config.py
+    database.py
+    celery_app.py
+    models/*
+    routes/*
+    services/*
+    tasks/*
+    utils/*
+
+# Exclude patterns
+omit = 
+    */tests/*
+    */test_*
+    */__pycache__/*
+    */venv/*
+    */writerly_env/*
+    */env/*
+    */migrations/*
+    */scripts/*
+    setup.py
+    conftest.py
+    */conftest.py
+    */.pytest_cache/*
+    */htmlcov/*
+    */build/*
+    */dist/*
+    */.git/*
+    */.github/*
+    */terraform/*
+    */deploy/*
+    */backups/*
+    */logs/*
+    */monitoring/*
+    */nginx/*
+    */ssl/*
+
+# Branch coverage
+branch = True
+
+# Parallel processing
+parallel = True
+
+# Data file location
+data_file = .coverage
+
+[report]
+# Reporting options
+precision = 2
+show_missing = True
+skip_covered = False
+sort = Cover
+
+# Exclude lines from coverage
+exclude_lines =
+    # Have to re-enable the standard pragma
+    pragma: no cover
+
+    # Don't complain about missing debug-only code:
+    def __repr__
+    if self\.debug
+
+    # Don't complain if tests don't hit defensive assertion code:
+    raise AssertionError
+    raise NotImplementedError
+
+    # Don't complain if non-runnable code isn't run:
+    if 0:
+    if __name__ == .__main__.:
+
+    # Don't complain about abstract methods
+    @(abc\.)?abstractmethod
+
+    # Skip typing imports
+    if TYPE_CHECKING:
+
+    # Skip logger calls
+    logger\.
+
+# Ignore errors
+ignore_errors = True
+
+# Fail under threshold
+fail_under = 80
+
+[html]
+# HTML report directory
+directory = htmlcov
+
+# HTML report options
+title = Writerly Test Coverage Report
+show_contexts = True
+
+[xml]
+# XML report file
+output = coverage.xml
+
+[json]
+# JSON report file
+output = coverage.json
+pretty_print = True
+
+[paths]
+# Path mapping for different environments
+source =
+    .
+    /app
+    */site-packages/* 

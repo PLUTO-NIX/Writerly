@@ -28,6 +28,10 @@ def create_app(config_name=None):
     # Flask 확장 초기화
     db.init_app(app)
     
+    # 보안 미들웨어 초기화
+    from utils.security_middleware import init_security
+    init_security(app, force_https=(config_name == 'production'))
+    
     # 블루프린트 등록
     from routes.slack import slack_bp
     from routes.auth import auth_bp

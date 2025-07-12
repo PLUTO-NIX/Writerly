@@ -2,12 +2,17 @@
 사용자 인증 확인 미들웨어
 """
 
+import os
 from functools import wraps
 from flask import request, jsonify, url_for
 import logging
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+# 개발 환경에서 인증 우회 설정
+DEVELOPMENT_MODE = os.environ.get('FLASK_ENV') == 'development'
+BYPASS_AUTH = os.environ.get('BYPASS_AUTH', 'false').lower() == 'true'
 
 
 def require_user_auth(func):
@@ -23,6 +28,13 @@ def require_user_auth(func):
     
     @wraps(func)
     def wrapper(*args, **kwargs):
+        # 개발 환경에서 인증 우회 옵션
+        if DEVELOPMENT_MODE and BYPASS_AUTH:
+            logger.info("개발 환경에서 사용자 인증을 우회합니다")
+            # 가짜 사용자 정보 생성
+            request.authenticated_user = create_test_user()
+            return func(*args, **kwargs)
+        
         # 슬랙 요청에서 사용자 정보 추출
         user_id = request.form.get('user_id')
         team_id = request.form.get('team_id')
@@ -45,6 +57,22 @@ def require_user_auth(func):
         return func(*args, **kwargs)
     
     return wrapper
+
+
+def create_test_user():
+    """테스트용 가짜 사용자 객체 생성"""
+    class TestUser:
+        def __init__(self):
+            self.id = 'test-user-id'
+            self.slack_user_id = 'U1234567890'
+            self.slack_team_id = 'T1234567890'
+            self.encrypted_user_token = 'test-token'
+            self.is_active = True
+            
+        def has_valid_token(self):
+            return True
+    
+    return TestUser()
 
 
 def check_user_authentication(user_id: str, team_id: Optional[str] = None) -> Dict[str, Any]:
@@ -311,6 +339,11 @@ def require_usage_limits(func):
     
     @wraps(func)
     def wrapper(*args, **kwargs):
+        # 개발 환경에서 사용량 제한 우회
+        if DEVELOPMENT_MODE and BYPASS_AUTH:
+            logger.info("개발 환경에서 사용량 제한을 우회합니다")
+            return func(*args, **kwargs)
+            
         # 사용자 정보 추출
         user_id = request.form.get('user_id')
         team_id = request.form.get('team_id')

@@ -14,6 +14,7 @@ class Config:
     
     # Flask 설정
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
+    FLASK_ENV = os.environ.get('FLASK_ENV', 'development')
     
     # 슬랙 설정
     SLACK_BOT_TOKEN = os.environ.get('SLACK_BOT_TOKEN')
@@ -42,6 +43,17 @@ class Config:
     # 로깅 설정
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
     LOG_FILE = os.environ.get('LOG_FILE', 'app.log')
+    
+    # 보안 설정
+    SSL_CERT_FILE = os.environ.get('SSL_CERT_FILE')
+    SSL_KEY_FILE = os.environ.get('SSL_KEY_FILE')
+    FORCE_HTTPS = os.environ.get('FORCE_HTTPS', 'True').lower() == 'true'
+    
+    # 레이트 제한 설정
+    RATE_LIMIT_STORAGE_URL = os.environ.get('RATE_LIMIT_STORAGE_URL', REDIS_URL)
+    
+    # 보안 헤더 설정
+    SECURITY_HEADERS_ENABLED = os.environ.get('SECURITY_HEADERS_ENABLED', 'True').lower() == 'true'
 
 
 class DevelopmentConfig(Config):

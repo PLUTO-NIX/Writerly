@@ -14,12 +14,7 @@ auth_bp = Blueprint('auth', __name__)
 
 logger = logging.getLogger(__name__)
 
-# OAuth 설정
-authorize_url_generator = AuthorizeUrlGenerator(
-    client_id=Config.SLACK_CLIENT_ID,
-    scopes=["chat:write", "commands", "chat:write.customize"],
-    user_scopes=["chat:write"]
-)
+# OAuth 설정 - redirect_uri는 런타임에 설정
 
 
 @auth_bp.route('/slack/oauth/start', methods=['GET'])
@@ -32,8 +27,27 @@ def oauth_start():
     # 상태 매개변수 생성 (CSRF 보호)
     state = request.args.get('state', 'default_state')
     
-    # 슬랙 OAuth URL 생성
-    oauth_url = authorize_url_generator.generate(state=state)
+    # redirect_uri 설정 (개발 환경에서는 ngrok URL 사용)
+    if Config.FLASK_ENV == 'development':
+        redirect_uri = "https://c9abfbae7abe.ngrok-free.app/auth/slack/oauth/callback"
+    else:
+        redirect_uri = url_for('auth.oauth_callback', _external=True)
+    
+    # 직접 OAuth URL 생성 (더 안정적)
+    from urllib.parse import urlencode
+    
+    # OAuth 파라미터 설정
+    oauth_params = {
+        'client_id': Config.SLACK_CLIENT_ID,
+        'scope': 'chat:write,commands,chat:write.customize',
+        'user_scope': 'chat:write',
+        'redirect_uri': redirect_uri,
+        'state': state,
+        'response_type': 'code'
+    }
+    
+    # Slack OAuth URL 생성
+    oauth_url = f"https://slack.com/oauth/v2/authorize?{urlencode(oauth_params)}"
     
     logger.info(f"OAuth 인증 시작: {oauth_url}")
     
@@ -65,11 +79,17 @@ def oauth_callback():
         client = WebClient()
         
         # 인증 코드를 토큰으로 교환
+        # ngrok URL 사용 (개발 환경)
+        if Config.FLASK_ENV == 'development':
+            redirect_uri = "https://c9abfbae7abe.ngrok-free.app/auth/slack/oauth/callback"
+        else:
+            redirect_uri = url_for('auth.oauth_callback', _external=True)
+            
         oauth_response = client.oauth_v2_access(
             client_id=Config.SLACK_CLIENT_ID,
             client_secret=Config.SLACK_CLIENT_SECRET,
             code=code,
-            redirect_uri=url_for('auth.oauth_callback', _external=True)
+            redirect_uri=redirect_uri
         )
         
         if not oauth_response.get('ok'):
