@@ -1,0 +1,60 @@
+version: "3.8"
+
+services:
+  # Flask 웹 애플리케이션
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - DATABASE_URL=postgresql://writerly:writerly@postgres:5432/writerly
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - .:/app
+    command: python app.py
+
+  # Celery Worker
+  worker:
+    build: .
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      - DATABASE_URL=postgresql://writerly:writerly@postgres:5432/writerly
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - .:/app
+    command: celery -A tasks.celery worker --loglevel=info
+
+  # Redis (메시지 브로커)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # PostgreSQL 데이터베이스
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=writerly
+      - POSTGRES_USER=writerly
+      - POSTGRES_PASSWORD=writerly
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  redis_data:
+  postgres_data:
