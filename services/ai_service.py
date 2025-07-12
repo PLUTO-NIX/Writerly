@@ -40,14 +40,15 @@ class AIService:
         return self.is_available and self.client is not None
     
     def process_text(self, text: str, prompt_type: str = 'professional', 
-                    custom_prompt: Optional[str] = None) -> Dict[str, Any]:
+                    custom_prompt_id: Optional[int] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         텍스트 AI 처리
         
         Args:
             text (str): 처리할 텍스트
             prompt_type (str): 기본 프롬프트 타입
-            custom_prompt (str): 사용자 정의 프롬프트
+            custom_prompt_id (int): 사용자 정의 프롬프트 ID
+            user_id (str): 슬랙 사용자 ID (사용자 정의 프롬프트 조회용)
             
         Returns:
             Dict[str, Any]: 처리 결과
@@ -63,7 +64,7 @@ class AIService:
         
         try:
             # 프롬프트 생성
-            system_prompt = custom_prompt or self._get_system_prompt(prompt_type)
+            system_prompt = self._get_system_prompt(prompt_type, custom_prompt_id, user_id)
             
             # OpenAI API 호출 (재시도 로직 포함)
             start_time = time.time()
@@ -191,15 +192,57 @@ class AIService:
                 'retryable': False
             }
     
-    def _get_system_prompt(self, prompt_type: str) -> str:
+    def _get_system_prompt(self, prompt_type: str, custom_prompt_id: Optional[int] = None, user_id: Optional[str] = None) -> str:
         """
         프롬프트 타입별 시스템 프롬프트 반환
         
         Args:
             prompt_type (str): 프롬프트 타입
+            custom_prompt_id (int): 사용자 정의 프롬프트 ID
+            user_id (str): 슬랙 사용자 ID
             
         Returns:
             str: 시스템 프롬프트
+        """
+        
+        # 사용자 정의 프롬프트 처리
+        if custom_prompt_id and user_id:
+            try:
+                from database import db_session_scope
+                from models import User, Prompt
+                
+                with db_session_scope() as session:
+                    # 사용자 찾기
+                    user = User.find_by_slack_user_id(session, user_id)
+                    if not user:
+                        logger.warning(f"사용자를 찾을 수 없음: {user_id}")
+                        return self._get_default_prompt(prompt_type)
+                    
+                    # 프롬프트 찾기
+                    prompt = Prompt.find_by_id_and_user(session, custom_prompt_id, user.id)
+                    if not prompt:
+                        logger.warning(f"프롬프트를 찾을 수 없음: {custom_prompt_id}")
+                        return self._get_default_prompt(prompt_type)
+                    
+                    logger.info(f"사용자 정의 프롬프트 사용: {prompt.name}")
+                    return prompt.prompt_text
+                    
+            except Exception as e:
+                logger.error(f"사용자 정의 프롬프트 로드 실패: {e}")
+                return self._get_default_prompt(prompt_type)
+        
+        # 기본 프롬프트 사용
+        return self._get_default_prompt(prompt_type)
+    
+    def _get_default_prompt(self, prompt_type: str) -> str:
+        """
+        기본 프롬프트 반환
+        
+        Args:
+            prompt_type (str): 프롬프트 타입
+            
+        Returns:
+            str: 기본 프롬프트
         """
         
         prompts = {

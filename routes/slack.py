@@ -58,7 +58,7 @@ def slack_events():
 def ai_command():
     """
     /ai 슬래시 명령어 처리
-    모달 표시 또는 직접 처리
+    모달 표시 또는 직접 처리 (스레드 지원)
     """
     
     # 서명 검증
@@ -70,14 +70,26 @@ def ai_command():
     channel_id = request.form.get('channel_id')
     text = request.form.get('text', '').strip()
     trigger_id = request.form.get('trigger_id')
+    thread_ts = request.form.get('thread_ts')  # 스레드 타임스탬프
     
     try:
+        # 스레드 정보 확인
+        from utils.thread_utils import thread_manager
+        
+        thread_info = None
+        if thread_ts:
+            thread_info = {
+                'channel_id': channel_id,
+                'thread_ts': thread_ts,
+                'is_thread': True
+            }
+        
         # 텍스트가 비어있으면 모달 표시 (GUI 모드)
         if not text:
-            return show_ai_modal(trigger_id, channel_id)
+            return show_ai_modal(trigger_id, channel_id, thread_info)
         
         # 텍스트가 있으면 CLI 모드로 처리
-        return process_ai_command(user_id, channel_id, text)
+        return process_ai_command(user_id, channel_id, text, thread_info)
         
     except Exception as e:
         from utils.slack_utils import error_response
@@ -150,7 +162,7 @@ def verify_slack_signature(request):
         return False
 
 
-def show_ai_modal(trigger_id, channel_id=None):
+def show_ai_modal(trigger_id, channel_id=None, thread_info=None):
     """AI 처리 모달 표시"""
     
     # 사용자 정의 프롬프트 조회
@@ -180,13 +192,18 @@ def show_ai_modal(trigger_id, channel_id=None):
                 "value": f"custom_{prompt['id']}"
             })
     
+    # 메타데이터 구성 (채널 ID + 스레드 정보)
+    metadata = channel_id or "general"
+    if thread_info and thread_info.get('is_thread'):
+        metadata = f"{channel_id}|{thread_info['thread_ts']}"
+    
     modal_view = {
         "type": "modal",
         "callback_id": "ai_modal",
         "title": {"type": "plain_text", "text": "AI 메시지 처리"},
         "submit": {"type": "plain_text", "text": "처리하기"},
         "close": {"type": "plain_text", "text": "취소"},
-        "private_metadata": channel_id or "general",  # 채널 ID 저장
+        "private_metadata": metadata,  # 채널 ID 및 스레드 정보 저장
         "blocks": [
             {
                 "type": "section",
@@ -364,10 +381,66 @@ def show_prompts_modal(trigger_id):
         }), 500
 
 
-def process_ai_command(user_id, channel_id, text):
+def process_ai_command(user_id, channel_id, text, thread_info=None):
     """CLI 모드 AI 명령어 처리"""
     
     try:
+        # CLI 파서 임포트
+        from utils.cli_parser import cli_parser
+        
+        # 유틸리티 함수 임포트
+        from utils.slack_utils import async_task_response, error_response, slack_response_manager
+        
+        # 명령어 파싱
+        parsed = cli_parser.parse_ai_command(text)
+        
+        # 모드별 처리
+        if parsed['mode'] == 'gui':
+            # GUI 모드 - 모달 표시
+            trigger_id = request.form.get('trigger_id')
+            return show_ai_modal(trigger_id, channel_id)
+        
+        elif parsed['mode'] == 'help':
+            # 도움말 표시
+            return jsonify({
+                'response_type': 'ephemeral',
+                'text': parsed['help_text']
+            })
+        
+        elif parsed['mode'] == 'list':
+            # 프롬프트 목록 표시
+            user_prompts = get_user_custom_prompts(user_id)
+            prompt_list = cli_parser.generate_prompt_list(user_prompts)
+            return jsonify({
+                'response_type': 'ephemeral',
+                'text': prompt_list
+            })
+        
+        elif parsed['mode'] == 'error':
+            # 파싱 오류 처리
+            return jsonify({
+                'response_type': 'ephemeral',
+                'text': f"❌ {parsed['error']}\n\n{parsed.get('help_text', '')}"
+            })
+        
+        elif parsed['mode'] == 'cli':
+            # CLI 모드 실행
+            return process_cli_mode(user_id, channel_id, parsed, thread_info)
+        
+        else:
+            return jsonify(error_response('알 수 없는 명령어 모드입니다.'))
+        
+    except Exception as e:
+        return jsonify(error_response(f"명령어 처리 실패: {str(e)}")), 500
+
+
+def process_cli_mode(user_id, channel_id, parsed_data, thread_info=None):
+    """CLI 모드 실행"""
+    
+    try:
+        # CLI 파서 임포트
+        from utils.cli_parser import cli_parser
+        
         # 유틸리티 함수 임포트
         from utils.slack_utils import async_task_response, error_response, slack_response_manager
         
@@ -378,28 +451,82 @@ def process_ai_command(user_id, channel_id, text):
         from utils.auth_middleware import get_user_token
         user_token = get_user_token(user_id)
         
+        # 사용자 정의 프롬프트 조회
+        user_prompts = get_user_custom_prompts(user_id)
+        
+        # 프롬프트 이름 유효성 검증
+        prompt_name = parsed_data.get('prompt_name')
+        content = parsed_data.get('content')
+        
+        if not content or not content.strip():
+            return jsonify({
+                'response_type': 'ephemeral',
+                'text': '❌ 처리할 텍스트를 입력해주세요.'
+            })
+        
+        # 프롬프트 검증
+        is_valid, error_msg, prompt_info = cli_parser.validate_prompt_name(prompt_name, user_prompts)
+        
+        if not is_valid:
+            return jsonify({
+                'response_type': 'ephemeral',
+                'text': f'❌ {error_msg}'
+            })
+        
+        # 프롬프트 타입 및 값 결정
+        if prompt_info:
+            if prompt_info['type'] == 'default':
+                prompt_type = prompt_info['value']
+                custom_prompt_id = None
+            else:  # custom
+                prompt_type = 'custom'
+                custom_prompt_id = prompt_info['value']
+        else:
+            # 기본 프롬프트 (전문적인 톤)
+            prompt_type = 'professional'
+            custom_prompt_id = None
+        
+        # 스레드 컨텍스트 처리
+        final_text = content
+        if thread_info and thread_info.get('is_thread'):
+            from utils.thread_utils import thread_manager
+            
+            # 스레드 컨텍스트 포함 여부 확인
+            if thread_manager.should_include_thread_context(content):
+                thread_context = thread_manager.get_thread_context(
+                    thread_info['channel_id'], 
+                    thread_info['thread_ts']
+                )
+                
+                if thread_context['success']:
+                    final_text = thread_manager.format_thread_context_for_ai(thread_context, content)
+        
         # 백그라운드 작업 등록
         task = process_ai_message.delay(
             user_id=user_id,
             channel_id=channel_id,
-            text=text,
-            prompt_type='professional',  # 기본 프롬프트
-            user_token=user_token
+            text=final_text,
+            prompt_type=prompt_type,
+            user_token=user_token,
+            custom_prompt_id=custom_prompt_id,
+            thread_info=thread_info
         )
         
         # 태스크 등록
         slack_response_manager.register_task(task.id, user_id, channel_id)
         
         # 즉시 응답 (3초 타임아웃 회피)
-        response = async_task_response(
-            task.id,
-            f"AI 처리 요청이 접수되었습니다.\n입력: `{text}`"
-        )
+        if prompt_name:
+            response_text = f"AI 처리 요청이 접수되었습니다.\n프롬프트: `{prompt_name}`\n입력: `{content[:100]}{'...' if len(content) > 100 else ''}`"
+        else:
+            response_text = f"AI 처리 요청이 접수되었습니다.\n프롬프트: `전문적인톤` (기본)\n입력: `{content[:100]}{'...' if len(content) > 100 else ''}`"
+        
+        response = async_task_response(task.id, response_text)
         
         return jsonify(response)
         
     except Exception as e:
-        return jsonify(error_response(f"작업 등록 실패: {str(e)}")), 500
+        return jsonify(error_response(f"CLI 모드 실행 실패: {str(e)}")), 500
 
 
 def handle_modal_submission(payload):
@@ -418,8 +545,24 @@ def handle_modal_submission(payload):
             text = values.get('text_input', {}).get('text_value', {}).get('value', '')
             prompt_value = values.get('prompt_select', {}).get('prompt_value', {}).get('selected_option', {}).get('value', 'professional')
             
-            # 채널 정보 (모달에서는 메타데이터에서 가져와야 함)
-            channel_id = view.get('private_metadata') or 'general'
+            # 채널 정보 및 스레드 정보 (모달에서는 메타데이터에서 가져와야 함)
+            metadata = view.get('private_metadata', '') or 'general'
+            channel_id = metadata
+            thread_info = None
+            
+            # 스레드 정보가 포함된 경우 파싱
+            if '|' in metadata:
+                try:
+                    parts = metadata.split('|')
+                    channel_id = parts[0]
+                    thread_ts = parts[1]
+                    thread_info = {
+                        'channel_id': channel_id,
+                        'thread_ts': thread_ts,
+                        'is_thread': True
+                    }
+                except Exception:
+                    pass
             
             if not text.strip():
                 return jsonify({
@@ -459,7 +602,9 @@ def handle_modal_submission(payload):
                 channel_id=channel_id,
                 text=text,
                 prompt_type=prompt_type,
-                user_token=user_token
+                user_token=user_token,
+                custom_prompt_id=custom_prompt_id,
+                thread_info=thread_info
             )
             
             # 모달 닫기
