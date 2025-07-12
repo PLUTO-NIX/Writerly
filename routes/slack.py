@@ -248,24 +248,110 @@ def show_ai_modal(trigger_id, channel_id=None):
 def show_prompts_modal(trigger_id):
     """프롬프트 관리 모달 표시"""
     
+    # 사용자 정의 프롬프트 조회
+    user_id = request.form.get('user_id')
+    custom_prompts = get_user_custom_prompts(user_id)
+    
+    # 기본 블록 구성
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "🔖 *사용자 정의 프롬프트 관리*\n나만의 프롬프트를 만들어 반복적인 작업을 자동화하세요."
+            }
+        },
+        {
+            "type": "divider"
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "📝 *새 프롬프트 추가*"
+            },
+            "accessory": {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "➕ 새 프롬프트",
+                    "emoji": True
+                },
+                "action_id": "add_prompt_button",
+                "style": "primary"
+            }
+        }
+    ]
+    
+    # 기존 프롬프트 목록 추가
+    if custom_prompts:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"📋 *기존 프롬프트 ({len(custom_prompts)}개)*"
+            }
+        })
+        
+        for prompt in custom_prompts:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{prompt['name']}*\n_{prompt['description'] if prompt.get('description') else '설명 없음'}_\n`{prompt['prompt_text'][:100]}{'...' if len(prompt['prompt_text']) > 100 else ''}`"
+                },
+                "accessory": {
+                    "type": "overflow",
+                    "action_id": f"prompt_overflow_{prompt['id']}",
+                    "options": [
+                        {
+                            "text": {
+                                "type": "plain_text",
+                                "text": "✏️ 수정",
+                                "emoji": True
+                            },
+                            "value": f"edit_{prompt['id']}"
+                        },
+                        {
+                            "text": {
+                                "type": "plain_text",
+                                "text": "🗑️ 삭제",
+                                "emoji": True
+                            },
+                            "value": f"delete_{prompt['id']}"
+                        }
+                    ]
+                }
+            })
+    else:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "📋 *기존 프롬프트*\n아직 생성된 프롬프트가 없습니다."
+            }
+        })
+    
+    # 도움말 추가
+    blocks.append({
+        "type": "divider"
+    })
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": "💡 *팁*: 프롬프트는 `{text}` 변수를 사용하여 사용자 입력을 참조할 수 있습니다.\n예: `다음 텍스트를 전문적인 톤으로 변경해주세요: {text}`"
+            }
+        ]
+    })
+    
     modal_view = {
         "type": "modal",
         "callback_id": "prompts_modal",
         "title": {"type": "plain_text", "text": "프롬프트 관리"},
         "close": {"type": "plain_text", "text": "닫기"},
-        "blocks": [
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "사용자 정의 프롬프트를 관리합니다."}
-            },
-            {
-                "type": "divider"
-            },
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "📝 *프롬프트 관리 기능*\n• 새 프롬프트 추가\n• 기존 프롬프트 수정\n• 프롬프트 삭제"}
-            }
-        ]
+        "blocks": blocks
     }
     
     try:
@@ -379,6 +465,234 @@ def handle_modal_submission(payload):
             # 모달 닫기
             return jsonify({'response_action': 'clear'})
         
+        elif view.get('callback_id') == 'add_prompt_modal':
+            # 새 프롬프트 추가
+            values = view.get('state', {}).get('values', {})
+            
+            # 입력값 추출
+            name = values.get('prompt_name', {}).get('name_value', {}).get('value', '').strip()
+            description = values.get('prompt_description', {}).get('description_value', {}).get('value', '').strip()
+            prompt_text = values.get('prompt_text', {}).get('text_value', {}).get('value', '').strip()
+            
+            # 유효성 검사
+            errors = {}
+            if not name:
+                errors['prompt_name'] = '프롬프트 이름을 입력해주세요.'
+            
+            if not prompt_text:
+                errors['prompt_text'] = '프롬프트 내용을 입력해주세요.'
+            
+            if errors:
+                return jsonify({
+                    'response_action': 'errors',
+                    'errors': errors
+                })
+            
+            # 프롬프트 저장
+            try:
+                from database import db_session_scope
+                from models import User, Prompt
+                
+                with db_session_scope() as session:
+                    # 사용자 찾기
+                    user = User.find_by_slack_user_id(session, user_id)
+                    if not user:
+                        return jsonify({
+                            'response_action': 'errors',
+                            'errors': {
+                                'prompt_name': '사용자 정보를 찾을 수 없습니다.'
+                            }
+                        })
+                    
+                    # 프롬프트 이름 중복 확인
+                    existing_prompt = session.query(Prompt).filter(
+                        Prompt.user_id == user.id,
+                        Prompt.name == name
+                    ).first()
+                    
+                    if existing_prompt:
+                        return jsonify({
+                            'response_action': 'errors',
+                            'errors': {
+                                'prompt_name': '이미 같은 이름의 프롬프트가 있습니다.'
+                            }
+                        })
+                    
+                    # 새 프롬프트 생성
+                    new_prompt = Prompt(
+                        user_id=user.id,
+                        name=name,
+                        description=description or None,
+                        prompt_text=prompt_text,
+                        is_public=False
+                    )
+                    session.add(new_prompt)
+                    session.commit()
+                    
+                    # 성공 메시지
+                    return jsonify({
+                        'response_action': 'clear',
+                        'response': {
+                            'text': f'✅ 프롬프트 "{name}"이 성공적으로 추가되었습니다!',
+                            'response_type': 'in_channel'
+                        }
+                    })
+                    
+            except Exception as e:
+                return jsonify({
+                    'response_action': 'errors',
+                    'errors': {
+                        'prompt_name': f'프롬프트 저장 중 오류가 발생했습니다: {str(e)}'
+                    }
+                })
+        
+        elif view.get('callback_id') == 'edit_prompt_modal':
+            # 프롬프트 수정
+            values = view.get('state', {}).get('values', {})
+            prompt_id = int(view.get('private_metadata', '0'))
+            
+            # 입력값 추출
+            name = values.get('prompt_name', {}).get('name_value', {}).get('value', '').strip()
+            description = values.get('prompt_description', {}).get('description_value', {}).get('value', '').strip()
+            prompt_text = values.get('prompt_text', {}).get('text_value', {}).get('value', '').strip()
+            
+            # 유효성 검사
+            errors = {}
+            if not name:
+                errors['prompt_name'] = '프롬프트 이름을 입력해주세요.'
+            
+            if not prompt_text:
+                errors['prompt_text'] = '프롬프트 내용을 입력해주세요.'
+            
+            if errors:
+                return jsonify({
+                    'response_action': 'errors',
+                    'errors': errors
+                })
+            
+            # 프롬프트 수정
+            try:
+                from database import db_session_scope
+                from models import User, Prompt
+                
+                with db_session_scope() as session:
+                    # 사용자 찾기
+                    user = User.find_by_slack_user_id(session, user_id)
+                    if not user:
+                        return jsonify({
+                            'response_action': 'errors',
+                            'errors': {
+                                'prompt_name': '사용자 정보를 찾을 수 없습니다.'
+                            }
+                        })
+                    
+                    # 프롬프트 찾기
+                    prompt = session.query(Prompt).filter(
+                        Prompt.id == prompt_id,
+                        Prompt.user_id == user.id
+                    ).first()
+                    
+                    if not prompt:
+                        return jsonify({
+                            'response_action': 'errors',
+                            'errors': {
+                                'prompt_name': '프롬프트를 찾을 수 없습니다.'
+                            }
+                        })
+                    
+                    # 프롬프트 이름 중복 확인 (자신 제외)
+                    existing_prompt = session.query(Prompt).filter(
+                        Prompt.user_id == user.id,
+                        Prompt.name == name,
+                        Prompt.id != prompt_id
+                    ).first()
+                    
+                    if existing_prompt:
+                        return jsonify({
+                            'response_action': 'errors',
+                            'errors': {
+                                'prompt_name': '이미 같은 이름의 프롬프트가 있습니다.'
+                            }
+                        })
+                    
+                    # 프롬프트 수정
+                    prompt.name = name
+                    prompt.description = description or None
+                    prompt.prompt_text = prompt_text
+                    session.commit()
+                    
+                    # 성공 메시지
+                    return jsonify({
+                        'response_action': 'clear',
+                        'response': {
+                            'text': f'✅ 프롬프트 "{name}"이 성공적으로 수정되었습니다!',
+                            'response_type': 'in_channel'
+                        }
+                    })
+                    
+            except Exception as e:
+                return jsonify({
+                    'response_action': 'errors',
+                    'errors': {
+                        'prompt_name': f'프롬프트 수정 중 오류가 발생했습니다: {str(e)}'
+                    }
+                })
+        
+        elif view.get('callback_id') == 'delete_prompt_modal':
+            # 프롬프트 삭제
+            prompt_id = int(view.get('private_metadata', '0'))
+            
+            try:
+                from database import db_session_scope
+                from models import User, Prompt
+                
+                with db_session_scope() as session:
+                    # 사용자 찾기
+                    user = User.find_by_slack_user_id(session, user_id)
+                    if not user:
+                        return jsonify({
+                            'response_action': 'errors',
+                            'errors': {
+                                'general': '사용자 정보를 찾을 수 없습니다.'
+                            }
+                        })
+                    
+                    # 프롬프트 찾기
+                    prompt = session.query(Prompt).filter(
+                        Prompt.id == prompt_id,
+                        Prompt.user_id == user.id
+                    ).first()
+                    
+                    if not prompt:
+                        return jsonify({
+                            'response_action': 'errors',
+                            'errors': {
+                                'general': '프롬프트를 찾을 수 없습니다.'
+                            }
+                        })
+                    
+                    # 프롬프트 삭제
+                    prompt_name = prompt.name
+                    session.delete(prompt)
+                    session.commit()
+                    
+                    # 성공 메시지
+                    return jsonify({
+                        'response_action': 'clear',
+                        'response': {
+                            'text': f'🗑️ 프롬프트 "{prompt_name}"이 성공적으로 삭제되었습니다.',
+                            'response_type': 'in_channel'
+                        }
+                    })
+                    
+            except Exception as e:
+                return jsonify({
+                    'response_action': 'errors',
+                    'errors': {
+                        'general': f'프롬프트 삭제 중 오류가 발생했습니다: {str(e)}'
+                    }
+                })
+        
         # 기본 응답
         return jsonify({'response_action': 'clear'})
         
@@ -394,8 +708,39 @@ def handle_modal_submission(payload):
 def handle_block_actions(payload):
     """블록 액션 처리"""
     
-    # 임시 응답 (실제 처리는 Phase 1.4에서 구현)
-    return jsonify({'status': 'ok'})
+    try:
+        # 액션 정보 추출
+        actions = payload.get('actions', [])
+        user_id = payload.get('user', {}).get('id')
+        trigger_id = payload.get('trigger_id')
+        
+        if not actions:
+            return jsonify({'status': 'ok'})
+        
+        action = actions[0]
+        action_id = action.get('action_id')
+        
+        # 새 프롬프트 추가 버튼
+        if action_id == 'add_prompt_button':
+            return show_add_prompt_modal(trigger_id)
+        
+        # 프롬프트 수정/삭제 메뉴
+        elif action_id and action_id.startswith('prompt_overflow_'):
+            selected_option = action.get('selected_option', {})
+            value = selected_option.get('value', '')
+            
+            if value.startswith('edit_'):
+                prompt_id = int(value.replace('edit_', ''))
+                return show_edit_prompt_modal(trigger_id, prompt_id)
+            
+            elif value.startswith('delete_'):
+                prompt_id = int(value.replace('delete_', ''))
+                return show_delete_prompt_modal(trigger_id, prompt_id)
+        
+        return jsonify({'status': 'ok'})
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
 
 
 def get_user_custom_prompts(user_id):
@@ -429,6 +774,227 @@ def get_user_custom_prompts(user_id):
     except Exception as e:
         logger.error(f"사용자 정의 프롬프트 조회 실패: {e}")
         return []
+
+
+def show_add_prompt_modal(trigger_id):
+    """새 프롬프트 추가 모달 표시"""
+    
+    modal_view = {
+        "type": "modal",
+        "callback_id": "add_prompt_modal",
+        "title": {"type": "plain_text", "text": "새 프롬프트 추가"},
+        "submit": {"type": "plain_text", "text": "추가"},
+        "close": {"type": "plain_text", "text": "취소"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "📝 *새 프롬프트 만들기*\n반복적으로 사용할 프롬프트를 만들어보세요."
+                }
+            },
+            {
+                "type": "divider"
+            },
+            {
+                "type": "input",
+                "block_id": "prompt_name",
+                "label": {"type": "plain_text", "text": "프롬프트 이름"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "name_value",
+                    "placeholder": {"type": "plain_text", "text": "예: 회의록 요약, 이메일 전문화"}
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "prompt_description",
+                "label": {"type": "plain_text", "text": "설명 (선택사항)"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "description_value",
+                    "placeholder": {"type": "plain_text", "text": "이 프롬프트가 무엇을 하는지 간단히 설명해주세요"}
+                },
+                "optional": True
+            },
+            {
+                "type": "input",
+                "block_id": "prompt_text",
+                "label": {"type": "plain_text", "text": "프롬프트 내용"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "text_value",
+                    "multiline": True,
+                    "placeholder": {"type": "plain_text", "text": "예: 다음 텍스트를 전문적인 톤으로 변경해주세요: {text}"}
+                },
+                "hint": {"type": "plain_text", "text": "{text}를 사용하면 사용자 입력을 참조할 수 있습니다."}
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "💡 *팁*: 효과적인 프롬프트 작성법\n• 구체적이고 명확하게 작성하세요\n• 원하는 결과를 자세히 설명하세요\n• {text} 변수를 활용하여 사용자 입력을 참조하세요"
+                    }
+                ]
+            }
+        ]
+    }
+    
+    try:
+        slack_client.views_open(trigger_id=trigger_id, view=modal_view)
+        return '', 200
+    except Exception as e:
+        return jsonify({
+            'response_type': 'ephemeral',
+            'text': f'❌ 모달을 열 수 없습니다: {str(e)}'
+        }), 500
+
+
+def show_edit_prompt_modal(trigger_id, prompt_id):
+    """프롬프트 수정 모달 표시"""
+    
+    try:
+        # 기존 프롬프트 정보 조회
+        from database import db_session_scope
+        from models import Prompt
+        
+        with db_session_scope() as session:
+            prompt = session.query(Prompt).filter(Prompt.id == prompt_id).first()
+            
+            if not prompt:
+                return jsonify({
+                    'response_type': 'ephemeral',
+                    'text': '❌ 프롬프트를 찾을 수 없습니다.'
+                }), 404
+        
+        modal_view = {
+            "type": "modal",
+            "callback_id": "edit_prompt_modal",
+            "title": {"type": "plain_text", "text": "프롬프트 수정"},
+            "submit": {"type": "plain_text", "text": "수정"},
+            "close": {"type": "plain_text", "text": "취소"},
+            "private_metadata": str(prompt_id),
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"✏️ *프롬프트 수정*\n'{prompt.name}' 프롬프트를 수정합니다."
+                    }
+                },
+                {
+                    "type": "divider"
+                },
+                {
+                    "type": "input",
+                    "block_id": "prompt_name",
+                    "label": {"type": "plain_text", "text": "프롬프트 이름"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "name_value",
+                        "initial_value": prompt.name,
+                        "placeholder": {"type": "plain_text", "text": "예: 회의록 요약, 이메일 전문화"}
+                    }
+                },
+                {
+                    "type": "input",
+                    "block_id": "prompt_description",
+                    "label": {"type": "plain_text", "text": "설명 (선택사항)"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "description_value",
+                        "initial_value": prompt.description or "",
+                        "placeholder": {"type": "plain_text", "text": "이 프롬프트가 무엇을 하는지 간단히 설명해주세요"}
+                    },
+                    "optional": True
+                },
+                {
+                    "type": "input",
+                    "block_id": "prompt_text",
+                    "label": {"type": "plain_text", "text": "프롬프트 내용"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "text_value",
+                        "multiline": True,
+                        "initial_value": prompt.prompt_text,
+                        "placeholder": {"type": "plain_text", "text": "예: 다음 텍스트를 전문적인 톤으로 변경해주세요: {text}"}
+                    },
+                    "hint": {"type": "plain_text", "text": "{text}를 사용하면 사용자 입력을 참조할 수 있습니다."}
+                }
+            ]
+        }
+        
+        slack_client.views_open(trigger_id=trigger_id, view=modal_view)
+        return '', 200
+        
+    except Exception as e:
+        return jsonify({
+            'response_type': 'ephemeral',
+            'text': f'❌ 모달을 열 수 없습니다: {str(e)}'
+        }), 500
+
+
+def show_delete_prompt_modal(trigger_id, prompt_id):
+    """프롬프트 삭제 확인 모달 표시"""
+    
+    try:
+        # 기존 프롬프트 정보 조회
+        from database import db_session_scope
+        from models import Prompt
+        
+        with db_session_scope() as session:
+            prompt = session.query(Prompt).filter(Prompt.id == prompt_id).first()
+            
+            if not prompt:
+                return jsonify({
+                    'response_type': 'ephemeral',
+                    'text': '❌ 프롬프트를 찾을 수 없습니다.'
+                }), 404
+        
+        modal_view = {
+            "type": "modal",
+            "callback_id": "delete_prompt_modal",
+            "title": {"type": "plain_text", "text": "프롬프트 삭제"},
+            "submit": {"type": "plain_text", "text": "삭제"},
+            "close": {"type": "plain_text", "text": "취소"},
+            "private_metadata": str(prompt_id),
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"🗑️ *프롬프트 삭제*\n정말로 '{prompt.name}' 프롬프트를 삭제하시겠습니까?"
+                    }
+                },
+                {
+                    "type": "divider"
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*프롬프트 정보*\n• **이름:** {prompt.name}\n• **설명:** {prompt.description or '설명 없음'}\n• **내용:** `{prompt.prompt_text[:100]}{'...' if len(prompt.prompt_text) > 100 else ''}`"
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "⚠️ *주의*\n삭제된 프롬프트는 복구할 수 없습니다."
+                    }
+                }
+            ]
+        }
+        
+        slack_client.views_open(trigger_id=trigger_id, view=modal_view)
+        return '', 200
+        
+    except Exception as e:
+        return jsonify({
+            'response_type': 'ephemeral',
+            'text': f'❌ 모달을 열 수 없습니다: {str(e)}'
+        }), 500
 
 
 @slack_bp.route('/usage', methods=['GET'])
