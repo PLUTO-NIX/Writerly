@@ -409,7 +409,7 @@ def log_usage_to_database(user_id, channel_id, prompt_type, ai_result, task_id, 
             usage_log = UsageLog.log_usage(
                 session=session,
                 user_id=user.id,
-                ai_model=ai_result.get('model', 'gpt-3.5-turbo'),
+                ai_model=ai_result.get('model', 'gpt-4o'),
                 prompt_type=prompt_type,
                 prompt_tokens=usage_info.get('prompt_tokens', 0),
                 completion_tokens=usage_info.get('completion_tokens', 0),

@@ -2,10 +2,6 @@
 Celery 애플리케이션 설정
 """
 
-# eventlet monkey patch (다른 모든 import 전에 실행)
-import eventlet
-eventlet.monkey_patch()
-
 from celery import Celery
 from config import Config
 import os

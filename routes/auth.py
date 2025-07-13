@@ -29,7 +29,7 @@ def oauth_start():
     
     # redirect_uri 설정 (개발 환경에서는 ngrok URL 사용)
     if Config.FLASK_ENV == 'development':
-        redirect_uri = "https://c9abfbae7abe.ngrok-free.app/auth/slack/oauth/callback"
+        redirect_uri = "https://47dd37b20722.ngrok.app/auth/slack/oauth/callback"
     else:
         redirect_uri = url_for('auth.oauth_callback', _external=True)
     
@@ -81,7 +81,7 @@ def oauth_callback():
         # 인증 코드를 토큰으로 교환
         # ngrok URL 사용 (개발 환경)
         if Config.FLASK_ENV == 'development':
-            redirect_uri = "https://c9abfbae7abe.ngrok-free.app/auth/slack/oauth/callback"
+            redirect_uri = "https://47dd37b20722.ngrok.app/auth/slack/oauth/callback"
         else:
             redirect_uri = url_for('auth.oauth_callback', _external=True)
             

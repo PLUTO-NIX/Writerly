@@ -158,8 +158,8 @@ def check_redis():
             }
         
         start_time = time.time()
-        # 임시 디버깅: 127.0.0.1 직접 사용
-        redis_url = 'redis://127.0.0.1:6379/0'
+        # Config에서 Redis URL 사용
+        redis_url = Config.REDIS_URL
         r = redis.from_url(redis_url)
         
         # 간단한 ping 테스트

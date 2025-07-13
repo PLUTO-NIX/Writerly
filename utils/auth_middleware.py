@@ -10,6 +10,15 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+def get_auth_url_with_ngrok_bypass(route_name: str) -> str:
+    """ngrok 브라우저 경고를 우회하는 인증 URL 생성"""
+    base_url = url_for(route_name, _external=True)
+    # ngrok 경고 우회 파라미터 추가
+    if 'ngrok' in base_url:
+        separator = '&' if '?' in base_url else '?'
+        return f"{base_url}{separator}ngrok-skip-browser-warning=true"
+    return base_url
+
 # 개발 환경에서 인증 우회 설정
 DEVELOPMENT_MODE = os.environ.get('FLASK_ENV') == 'development'
 BYPASS_AUTH = os.environ.get('BYPASS_AUTH', 'false').lower() == 'true'
@@ -145,7 +154,7 @@ def handle_unauthenticated_user(auth_result: Dict[str, Any]) -> tuple:
     message = auth_result.get('message', '인증이 필요합니다')
     
     if reason == 'user_not_found':
-        # 새 사용자 - OAuth 인증 안내
+        # 새 사용자 - OAuth 인증 안내 (200 OK로 응답)
         return jsonify({
             'response_type': 'ephemeral',
             'text': f'🔐 {message}',
@@ -156,14 +165,14 @@ def handle_unauthenticated_user(auth_result: Dict[str, Any]) -> tuple:
                 'actions': [{
                     'type': 'button',
                     'text': '인증하기',
-                    'url': url_for('auth.oauth_info', _external=True),
+                    'url': get_auth_url_with_ngrok_bypass('auth.oauth_info'),
                     'style': 'primary'
                 }]
             }]
-        }), 401
+        }), 200
     
     elif reason == 'token_invalid':
-        # 토큰 만료 - 재인증 안내
+        # 토큰 만료 - 재인증 안내 (200 OK로 응답)
         return jsonify({
             'response_type': 'ephemeral',
             'text': f'🔐 {message}',
@@ -174,14 +183,14 @@ def handle_unauthenticated_user(auth_result: Dict[str, Any]) -> tuple:
                 'actions': [{
                     'type': 'button',
                     'text': '재인증하기',
-                    'url': url_for('auth.oauth_start', _external=True),
+                    'url': get_auth_url_with_ngrok_bypass('auth.oauth_start'),
                     'style': 'primary'
                 }]
             }]
-        }), 401
+        }), 200
     
     elif reason == 'user_inactive':
-        # 비활성화된 사용자
+        # 비활성화된 사용자 (200 OK로 응답)
         return jsonify({
             'response_type': 'ephemeral',
             'text': f'⚠️ {message}',
@@ -196,10 +205,10 @@ def handle_unauthenticated_user(auth_result: Dict[str, Any]) -> tuple:
                     'style': 'danger'
                 }]
             }]
-        }), 403
+        }), 200
     
     else:
-        # 기타 오류
+        # 기타 오류 (200 OK로 응답)
         return jsonify({
             'response_type': 'ephemeral',
             'text': f'❌ {message}',
@@ -210,11 +219,11 @@ def handle_unauthenticated_user(auth_result: Dict[str, Any]) -> tuple:
                 'actions': [{
                     'type': 'button',
                     'text': '다시 시도',
-                    'url': url_for('auth.oauth_start', _external=True),
+                    'url': get_auth_url_with_ngrok_bypass('auth.oauth_start'),
                     'style': 'primary'
                 }]
             }]
-        }), 500
+        }), 200
 
 
 def get_user_token(user_id: str, team_id: Optional[str] = None) -> Optional[str]:

@@ -20,7 +20,7 @@ class UsageLog(Base):
     channel_id = Column(String(50), nullable=True)
     
     # AI 모델 정보
-    ai_model = Column(String(50), nullable=False, default='gpt-3.5-turbo')
+    ai_model = Column(String(50), nullable=False, default='gpt-4o')
     prompt_type = Column(String(50), nullable=False)
     prompt_id = Column(Integer, ForeignKey('prompts.id'), nullable=True)
     

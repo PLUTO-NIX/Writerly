@@ -15,11 +15,15 @@ logger = logging.getLogger(__name__)
 class UsageTracker:
     """API 사용량 추적 클래스"""
     
-    # GPT-3.5-turbo 가격 (2024년 기준, 1K 토큰당)
+    # AI 모델 가격 (2024년 기준, 1K 토큰당)
     PRICING = {
         'gpt-3.5-turbo': {
             'input': 0.0015,   # $0.0015 per 1K input tokens
             'output': 0.002    # $0.002 per 1K output tokens
+        },
+        'gpt-4o': {
+            'input': 0.005,    # $0.005 per 1K input tokens
+            'output': 0.015    # $0.015 per 1K output tokens
         },
         'gpt-4': {
             'input': 0.03,     # $0.03 per 1K input tokens
@@ -153,7 +157,7 @@ class UsageTracker:
             float: 계산된 비용 (USD)
         """
         
-        pricing = self.PRICING.get(model, self.PRICING['gpt-3.5-turbo'])
+        pricing = self.PRICING.get(model, self.PRICING['gpt-4o'])
         
         input_cost = (prompt_tokens / 1000) * pricing['input']
         output_cost = (completion_tokens / 1000) * pricing['output']

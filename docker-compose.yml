@@ -12,6 +12,7 @@ services:
     environment:
       - FLASK_ENV=development
       - FLASK_DEBUG=1
+      - BYPASS_AUTH=${BYPASS_AUTH}
       - DATABASE_URL=postgresql://writerly:writerly@postgres:5432/writerly
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -51,6 +52,9 @@ services:
     command:
       - "http"
       - "web:5000"
+      - "--hostname=writerly.io.ngrok.app"
+      - "--log=stdout"
+      - "--log-level=debug"
     ports:
       - "4040:4040" # ngrok 웹 UI
     depends_on:

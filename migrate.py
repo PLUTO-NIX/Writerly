@@ -111,7 +111,7 @@ def create_test_data():
             # 테스트 사용량 로그 생성
             test_log = UsageLog(
                 user_id=test_user.id,
-                ai_model='gpt-3.5-turbo',
+                ai_model='gpt-4o',
                 prompt_type='professional',
                 prompt_tokens=50,
                 completion_tokens=100,

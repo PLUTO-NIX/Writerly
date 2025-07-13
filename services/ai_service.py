@@ -72,7 +72,7 @@ class AIService:
             
             def make_api_call():
                 return self.client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model="gpt-4o",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": text}
@@ -112,7 +112,7 @@ class AIService:
             # 사용량 추적
             from utils.usage_tracker import usage_tracker
             tracked_usage = usage_tracker.track_request(
-                model="gpt-3.5-turbo",
+                model="gpt-4o",
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
                 processing_time=processing_time,
@@ -130,7 +130,7 @@ class AIService:
                 'original_text': text,
                 'prompt_type': prompt_type,
                 'usage': usage_info,
-                'model': 'gpt-3.5-turbo'
+                'model': 'gpt-4o'
             }
             
         except openai.RateLimitError as e:
@@ -139,7 +139,7 @@ class AIService:
             
             # 에러 사용량 추적
             from utils.usage_tracker import usage_tracker
-            usage_tracker.track_error("gpt-3.5-turbo", "rate_limit_error", processing_time)
+            usage_tracker.track_error("gpt-4o", "rate_limit_error", processing_time)
             
             return {
                 'success': False,
@@ -154,7 +154,7 @@ class AIService:
             
             # 에러 사용량 추적
             from utils.usage_tracker import usage_tracker
-            usage_tracker.track_error("gpt-3.5-turbo", "timeout_error", processing_time)
+            usage_tracker.track_error("gpt-4o", "timeout_error", processing_time)
             
             return {
                 'success': False,
@@ -169,7 +169,7 @@ class AIService:
             
             # 에러 사용량 추적
             from utils.usage_tracker import usage_tracker
-            usage_tracker.track_error("gpt-3.5-turbo", "api_error", processing_time)
+            usage_tracker.track_error("gpt-4o", "api_error", processing_time)
             
             return {
                 'success': False,
@@ -184,7 +184,7 @@ class AIService:
             
             # 에러 사용량 추적
             from utils.usage_tracker import usage_tracker
-            usage_tracker.track_error("gpt-3.5-turbo", "unknown_error", processing_time)
+            usage_tracker.track_error("gpt-4o", "unknown_error", processing_time)
             
             return {
                 'success': False,
@@ -210,7 +210,22 @@ class AIService:
         # 일회용 프롬프트 처리
         if prompt_type == 'oneoff' and oneoff_prompt:
             logger.info(f"일회용 프롬프트 사용: {oneoff_prompt[:50]}...")
-            return oneoff_prompt
+            # 자유 프롬프트를 명확한 시스템 프롬프트 형태로 포맷팅
+            formatted_prompt = f"""
+                당신은 다양한 텍스트 처리 작업을 수행하는 AI 어시스턴트입니다.
+                사용자가 요청한 작업에 따라 주어진 텍스트를 처리해주세요.
+                
+                사용자 요청: {oneoff_prompt}
+                
+                지침:
+                - 사용자의 요청을 정확히 이해하고 수행해주세요
+                - 원본 텍스트의 의미를 유지하면서 요청사항을 반영해주세요
+                - 자연스럽고 적절한 결과를 제공해주세요
+                - 번역 요청인 경우 번역 결과만, 수정 요청인 경우 수정된 텍스트만 응답해주세요
+                
+                주어진 텍스트를 위 요청에 따라 처리하여 응답해주세요.
+            """
+            return formatted_prompt.strip()
         
         # 사용자 정의 프롬프트 처리
         if custom_prompt_id and user_id:

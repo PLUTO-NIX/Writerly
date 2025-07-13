@@ -3,4 +3,5 @@ tunnels:
   web:
     addr: "web:5000"
     proto: http
-web_addr: 0.0.0.0:4040 
+    hostname: "writerly.io.ngrok.app"
+web_addr: false 
