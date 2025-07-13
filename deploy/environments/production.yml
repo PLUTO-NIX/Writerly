@@ -1,0 +1,579 @@
+# 운영 환경 (Production) 배포 설정
+# 실제 서비스 운영 환경
+
+metadata:
+  name: "production"
+  description: "실제 서비스 운영 환경 - 24/7 가용성 보장"
+  tier: "production"
+  cost_center: "operations"
+  team: "platform"
+  criticality: "critical"
+  
+# 인프라 설정
+infrastructure:
+  # AWS 기본 설정
+  aws:
+    region: "us-west-2"
+    account_id: "${AWS_PROD_ACCOUNT_ID}"
+    
+    # 재해 복구용 보조 리전
+    dr_region: "us-east-1"
+    
+  # 네트워킹
+  networking:
+    vpc_cidr: "10.0.0.0/16"
+    availability_zones:
+      - "us-west-2a"
+      - "us-west-2b"
+      - "us-west-2c"
+    subnets:
+      public:
+        - "10.0.1.0/24"
+        - "10.0.2.0/24"
+        - "10.0.3.0/24"
+      private:
+        - "10.0.11.0/24"
+        - "10.0.12.0/24"
+        - "10.0.13.0/24"
+      database:
+        - "10.0.21.0/24"
+        - "10.0.22.0/24"
+        - "10.0.23.0/24"
+
+# 컴퓨팅 리소스
+compute:
+  # ECS 클러스터
+  ecs:
+    cluster_name: "writerly-production"
+    capacity_providers: ["FARGATE"]
+    default_capacity_provider: "FARGATE"
+    
+    # 운영환경 고가용성 설정
+    container_insights: true
+    
+  # 서비스 설정
+  services:
+    web:
+      name: "writerly-web-production"
+      cpu: 1024     # 1 vCPU
+      memory: 2048  # 2 GB
+      desired_count: 3
+      min_capacity: 2
+      max_capacity: 10
+      
+      # 배치 전략
+      placement_strategy:
+        - type: "spread"
+          field: "attribute:ecs.availability-zone"
+        - type: "spread"
+          field: "instanceId"
+      
+    worker:
+      name: "writerly-worker-production"
+      cpu: 1024
+      memory: 2048
+      desired_count: 3
+      min_capacity: 2
+      max_capacity: 10
+      
+    beat:
+      name: "writerly-beat-production"
+      cpu: 512
+      memory: 1024
+      desired_count: 1  # 단일 인스턴스 (스케줄러)
+
+# 데이터베이스
+database:
+  postgresql:
+    identifier: "writerly-production-db"
+    engine: "postgres"
+    engine_version: "15.8"
+    instance_class: "db.r6g.large"  # 메모리 최적화
+    allocated_storage: 200
+    max_allocated_storage: 1000
+    storage_type: "gp3"
+    storage_throughput: 1000
+    backup_retention_period: 30
+    backup_window: "03:00-04:00"
+    maintenance_window: "sun:04:00-sun:05:00"
+    multi_az: true
+    publicly_accessible: false
+    deletion_protection: true
+    
+    # 운영 환경용 설정
+    skip_final_snapshot: false
+    auto_minor_version_upgrade: false  # 수동 관리
+    monitoring_interval: 60
+    performance_insights_enabled: true
+    performance_insights_retention_period: 7
+    
+    # 읽기 복제본
+    read_replicas:
+      - identifier: "writerly-production-db-read-1"
+        instance_class: "db.r6g.large"
+        availability_zone: "us-west-2b"
+      - identifier: "writerly-production-db-read-2"
+        instance_class: "db.r6g.large"
+        availability_zone: "us-west-2c"
+    
+    # 프록시 (Connection Pooling)
+    proxy:
+      enabled: true
+      name: "writerly-production-proxy"
+      target_group_name: "default"
+      max_connections_percent: 100
+      
+# 캐시
+cache:
+  redis:
+    cluster_id: "writerly-production-redis"
+    node_type: "cache.r6g.large"
+    num_cache_nodes: 3
+    engine_version: "7.0"
+    port: 6379
+    parameter_group: "default.redis7"
+    
+    # 운영 환경용 설정
+    snapshot_retention_limit: 5
+    snapshot_window: "03:00-05:00"
+    maintenance_window: "sun:05:00-sun:06:00"
+    automatic_failover_enabled: true
+    cluster_enabled: true
+    
+    # Redis Sentinel
+    sentinel:
+      enabled: true
+      quorum: 2
+
+# 로드 밸런서
+load_balancer:
+  application_lb:
+    name: "writerly-production-alb"
+    scheme: "internet-facing"
+    type: "application"
+    ip_address_type: "ipv4"
+    
+    # 리스너 설정
+    listeners:
+      - port: 80
+        protocol: "HTTP"
+        default_action: "redirect-to-https"
+      - port: 443
+        protocol: "HTTPS"
+        ssl_policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+        certificate_arn: "${SSL_CERT_ARN_PROD}"
+    
+    # 액세스 로깅
+    access_logs:
+      enabled: true
+      bucket: "writerly-production-access-logs"
+      prefix: "alb"
+      
+    # 삭제 보호
+    deletion_protection: true
+    
+  # Network Load Balancer (내부 서비스용)
+  network_lb:
+    name: "writerly-production-nlb"
+    scheme: "internal"
+    type: "network"
+
+# CDN
+cdn:
+  cloudfront:
+    enabled: true
+    distribution_name: "writerly-production"
+    price_class: "PriceClass_All"  # 전 세계 배포
+    
+    origins:
+      - domain_name: "${ALB_DNS_NAME}"
+        origin_id: "writerly-alb"
+        
+    behaviors:
+      - path_pattern: "/static/*"
+        target_origin_id: "writerly-alb"
+        compress: true
+        cache_policy: "optimized"
+        ttl: 86400  # 24시간
+        
+    # WAF 연동
+    web_acl_id: "${WAF_WEB_ACL_ID}"
+
+# 도메인 및 DNS
+domain:
+  primary: "writerly.app"
+  api: "api.writerly.app"
+  admin: "admin.writerly.app"
+  www: "www.writerly.app"
+  
+  # Route53 설정
+  hosted_zone_id: "${ROUTE53_PROD_ZONE_ID}"
+  ttl: 300
+  
+  # 지리적 라우팅
+  geo_routing:
+    enabled: true
+    regions:
+      - location: "US"
+        endpoint: "us-west-2.writerly.app"
+      - location: "EU"
+        endpoint: "eu-west-1.writerly.app"
+      - location: "AS"
+        endpoint: "ap-northeast-1.writerly.app"
+
+# 보안 설정
+security:
+  # WAF 강화
+  waf:
+    enabled: true
+    web_acl_name: "writerly-production-waf"
+    rules:
+      - name: "AWSManagedRulesCommonRuleSet"
+        priority: 1
+      - name: "AWSManagedRulesKnownBadInputsRuleSet"
+        priority: 2
+      - name: "AWSManagedRulesLinuxRuleSet"
+        priority: 3
+      - name: "AWSManagedRulesSQLiRuleSet"
+        priority: 4
+      - name: "AWSManagedRulesWordPressRuleSet"
+        priority: 5
+      - name: "RateLimitRule"
+        priority: 10
+        rate_limit: 5000  # 분당 요청 수
+      - name: "GeoBlockRule"
+        priority: 20
+        blocked_countries: ["CN", "RU", "KP"]  # 지역 차단
+        
+  # DDoS 보호
+  ddos_protection:
+    enabled: true
+    shield_advanced: true
+    
+  # 보안 그룹 (엄격한 설정)
+  security_groups:
+    web:
+      ingress:
+        - from_port: 80
+          to_port: 80
+          protocol: "tcp"
+          source_security_group: "alb"
+        - from_port: 443
+          to_port: 443
+          protocol: "tcp"
+          source_security_group: "alb"
+          
+    database:
+      ingress:
+        - from_port: 5432
+          to_port: 5432
+          protocol: "tcp"
+          source_security_group: "web"
+          
+  # SSL/TLS
+  ssl:
+    certificate_domain: "*.writerly.app"
+    validation_method: "DNS"
+    
+  # 네트워크 보안
+  network_security:
+    vpc_flow_logs: true
+    guardduty: true
+    macie: true  # 데이터 보안
+    
+  # 암호화
+  encryption:
+    at_rest: true
+    in_transit: true
+    kms_key_rotation: true
+
+# 환경 변수
+environment_variables:
+  # Flask 설정
+  FLASK_ENV: "production"
+  FLASK_DEBUG: "False"
+  SECRET_KEY: "${SECRET_KEY_PROD}"
+  
+  # 데이터베이스 (읽기/쓰기 분리)
+  DATABASE_URL: "postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_ENDPOINT}:5432/${DB_NAME}"
+  DATABASE_READ_URL: "postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_READ_ENDPOINT}:5432/${DB_NAME}"
+  
+  # Redis (클러스터 모드)
+  REDIS_URL: "redis://${REDIS_CLUSTER_ENDPOINT}:6379"
+  
+  # Celery
+  CELERY_BROKER_URL: "redis://${REDIS_CLUSTER_ENDPOINT}:6379/1"
+  CELERY_RESULT_BACKEND: "redis://${REDIS_CLUSTER_ENDPOINT}:6379/2"
+  
+  # API 키
+  OPENAI_API_KEY: "${OPENAI_API_KEY_PROD}"
+  SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN_PROD}"
+  SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET_PROD}"
+  
+  # 로깅
+  LOG_LEVEL: "WARNING"
+  LOG_FORMAT: "json"
+  
+  # 운영 전용 설정
+  ENABLE_DEBUG_TOOLBAR: "False"
+  MOCK_EXTERNAL_APIS: "False"
+  RATE_LIMITING_ENABLED: "True"
+  EMAIL_BACKEND: "ses"
+  
+  # 성능 최적화
+  GUNICORN_WORKERS: "4"
+  GUNICORN_TIMEOUT: "120"
+  CONNECTION_POOL_SIZE: "20"
+  
+  # 보안 강화
+  SECURE_SSL_REDIRECT: "True"
+  SECURE_HSTS_SECONDS: "31536000"
+  SECURE_HSTS_INCLUDE_SUBDOMAINS: "True"
+  SECURE_CONTENT_TYPE_NOSNIFF: "True"
+
+# 모니터링 (종합적)
+monitoring:
+  # CloudWatch
+  cloudwatch:
+    log_group: "/aws/ecs/writerly-production"
+    log_retention_days: 365  # 1년 보관
+    
+    # 상세 메트릭 필터
+    metric_filters:
+      - name: "error_count"
+        pattern: "ERROR"
+        metric_name: "ErrorCount"
+        metric_namespace: "Writerly/Production"
+      - name: "critical_count"
+        pattern: "CRITICAL"
+        metric_name: "CriticalCount"
+        metric_namespace: "Writerly/Production"
+      - name: "response_time"
+        pattern: "[timestamp, request_id, response_time = *]"
+        metric_name: "ResponseTime"
+        metric_namespace: "Writerly/Production"
+      - name: "request_count"
+        pattern: "[timestamp, request_id, method, path, status = *]"
+        metric_name: "RequestCount"
+        metric_namespace: "Writerly/Production"
+        
+  # 운영 알람 (24/7)
+  alarms:
+    enabled: true
+    notification_topics:
+      critical: "${SNS_PROD_CRITICAL}"
+      warning: "${SNS_PROD_WARNING}"
+      info: "${SNS_PROD_INFO}"
+    
+    rules:
+      - name: "CriticalErrorRate"
+        metric: "ErrorCount"
+        threshold: 5
+        period: 300
+        evaluation_periods: 1
+        severity: "critical"
+        
+      - name: "HighResponseTime"
+        metric: "ResponseTime"
+        threshold: 3000
+        period: 300
+        evaluation_periods: 2
+        severity: "warning"
+        
+      - name: "DatabaseConnections"
+        metric: "DatabaseConnections"
+        threshold: 90
+        period: 300
+        evaluation_periods: 1
+        severity: "warning"
+        
+      - name: "MemoryUtilization"
+        metric: "MemoryUtilization"
+        threshold: 85
+        period: 300
+        evaluation_periods: 2
+        severity: "warning"
+        
+      - name: "CPUUtilization"
+        metric: "CPUUtilization"
+        threshold: 80
+        period: 300
+        evaluation_periods: 3
+        severity: "warning"
+        
+  # 대시보드
+  dashboards:
+    enabled: true
+    name: "Writerly-Production"
+    
+  # APM 및 트레이싱
+  apm:
+    enabled: true
+    service_name: "writerly-production"
+    distributed_tracing: true
+    
+  # 신틱 모니터링
+  synthetic_monitoring:
+    enabled: true
+    endpoints:
+      - url: "https://writerly.app/health"
+        frequency: 60  # 1분마다
+      - url: "https://api.writerly.app/health"
+        frequency: 60
+        
+# 백업 및 재해 복구
+backup:
+  database:
+    enabled: true
+    schedule: "0 2 * * *"  # 매일 오전 2시
+    retention_days: 90
+    
+    # 교차 리전 백업
+    cross_region_backup:
+      enabled: true
+      destination_region: "us-east-1"
+      
+    # Point-in-time Recovery
+    point_in_time_recovery:
+      enabled: true
+      retention_period: 35  # 35일
+      
+  # 애플리케이션 백업
+  application_backup:
+    enabled: true
+    schedule: "0 1 * * *"  # 매일 오전 1시
+    
+  # 재해 복구
+  disaster_recovery:
+    enabled: true
+    rpo: 4  # Recovery Point Objective: 4시간
+    rto: 1  # Recovery Time Objective: 1시간
+    
+    # 백업 검증
+    backup_verification:
+      enabled: true
+      schedule: "0 6 * * 0"  # 매주 일요일
+
+# 배포 설정
+deployment:
+  # Docker 이미지
+  image:
+    repository: "${ECR_REGISTRY}/writerly-app"
+    tag: "${RELEASE_VERSION}"
+    pull_policy: "Always"
+    
+  # Blue/Green 배포
+  strategy:
+    type: "blue_green"
+    canary_percentage: 5   # 5% 트래픽으로 시작
+    promotion_interval: 600  # 10분 간격
+    full_promotion_delay: 1800  # 30분 후 전체 전환
+    
+  # 엄격한 헬스체크
+  health_check:
+    enabled: true
+    path: "/health"
+    interval: 15
+    timeout: 5
+    healthy_threshold: 3
+    unhealthy_threshold: 2
+    grace_period: 300  # 5분
+    
+  # 수동 배포 (운영 환경)
+  auto_deploy:
+    enabled: false  # 수동 승인 필요
+    
+  # 배포 후 검증
+  post_deployment_validation:
+    enabled: true
+    validation_suites:
+      - "smoke_tests"
+      - "integration_tests"
+      - "performance_tests"
+      - "security_tests"
+    rollback_on_failure: true
+
+# 성능 최적화
+performance:
+  # 오토 스케일링
+  auto_scaling:
+    enabled: true
+    target_tracking:
+      - metric: "CPUUtilization"
+        target_value: 70
+      - metric: "MemoryUtilization"
+        target_value: 80
+      - metric: "RequestCountPerTarget"
+        target_value: 1000
+        
+    scheduled_scaling:
+      - name: "business_hours_scale_up"
+        schedule: "0 8 * * 1-5"  # 평일 오전 8시
+        min_capacity: 3
+        max_capacity: 10
+        desired_capacity: 5
+      - name: "off_hours_scale_down"
+        schedule: "0 20 * * 1-5"  # 평일 오후 8시
+        min_capacity: 2
+        max_capacity: 6
+        desired_capacity: 3
+        
+  # 캐싱 전략
+  caching:
+    application_cache:
+      ttl: 3600  # 1시간
+      max_size: "1GB"
+    
+    database_query_cache:
+      enabled: true
+      ttl: 300  # 5분
+      
+# 규정 준수
+compliance:
+  # 데이터 보호
+  data_protection:
+    gdpr_compliance: true
+    ccpa_compliance: true
+    data_retention_policy: "7_years"
+    
+  # 감사 로깅
+  audit_logging:
+    enabled: true
+    events: ["login", "data_access", "data_modification", "admin_actions"]
+    
+  # 암호화 표준
+  encryption_standards:
+    at_rest: "AES-256"
+    in_transit: "TLS-1.3"
+    
+# 비용 최적화
+cost_optimization:
+  # 예산 관리
+  budget_management:
+    enabled: true
+    monthly_budget: 2000  # USD
+    alert_thresholds: [75, 90, 100]
+    
+  # 리소스 최적화
+  resource_optimization:
+    reserved_instances: true
+    savings_plans: true
+    spot_instances: false  # 운영환경에서는 비활성화
+    
+  # 비용 모니터링
+  cost_monitoring:
+    enabled: true
+    granularity: "daily"
+    
+# 리소스 태깅 (상세)
+resource_tags:
+  Environment: "production"
+  Project: "writerly"
+  Team: "platform"
+  CostCenter: "operations"
+  Backup: "required"
+  Monitoring: "enabled"
+  Compliance: "required"
+  Criticality: "high"
+  Owner: "platform-team"
+  Contact: "platform@writerly.app" 

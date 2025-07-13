@@ -1,0 +1,433 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ========================================
+  # Code Quality and Security Checks
+  # ========================================
+  quality-checks:
+    name: Quality & Security Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install flake8 black isort safety bandit
+        
+    - name: Code formatting check (Black)
+      run: black --check --diff .
+      
+    - name: Import sorting check (isort)
+      run: isort --check-only --diff .
+      
+    - name: Linting (Flake8)
+      run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+      
+    - name: Security check (Bandit)
+      run: bandit -r . -x tests/ -f json -o bandit-report.json
+      
+    - name: Dependency vulnerability check (Safety)
+      run: safety check --json --output safety-report.json
+      continue-on-error: true
+      
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  # ========================================
+  # Unit Tests
+  # ========================================
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: quality-checks
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_writerly
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-mock pytest-asyncio
+        
+    - name: Run tests with coverage
+      env:
+        DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_writerly
+        REDIS_URL: redis://localhost:6379/0
+        FLASK_ENV: testing
+        SECRET_KEY: test-secret-key
+      run: |
+        pytest tests/ --cov=. --cov-report=xml --cov-report=html --cov-fail-under=80
+        
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: true
+        
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: |
+          coverage.xml
+          htmlcov/
+
+  # ========================================
+  # Build Docker Image
+  # ========================================
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [quality-checks, test]
+    
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,format=short
+          
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+
+  # ========================================
+  # Security Scanning
+  # ========================================
+  security-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ needs.build.outputs.image-tag }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # ========================================
+  # Deploy to Staging
+  # ========================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, security-scan]
+    if: github.ref == 'refs/heads/develop'
+    environment: 
+      name: staging
+      url: https://staging.writerly.app
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+        
+    - name: Install deployment dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq
+        
+        # Install yq
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+        
+        # Install Terraform
+        wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+        sudo apt-get update && sudo apt-get install terraform
+        
+    - name: Deploy to Staging
+      run: |
+        chmod +x scripts/deploy.sh
+        ./scripts/deploy.sh deploy staging \
+          --tag "staging-$(echo ${{ github.sha }} | cut -c1-8)" \
+          --yes \
+          --verbose
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        
+    - name: Run integration tests
+      run: |
+        echo "🧪 Running integration tests..."
+        # 기본 API 엔드포인트 테스트
+        curl -f https://staging.writerly.app/health || exit 1
+        curl -f https://staging.writerly.app/health/ready || exit 1
+        curl -f https://staging.writerly.app/health/live || exit 1
+        echo "✅ Integration tests completed!"
+        
+    - name: Start rollback monitoring
+      run: |
+        echo "🔍 Starting rollback monitoring for staging deployment..."
+        chmod +x scripts/monitor-rollback.sh
+        
+        # 백그라운드에서 롤백 모니터링 시작 (30분간)
+        nohup ./scripts/monitor-rollback.sh staging \
+          --version "staging-$(echo ${{ github.sha }} | cut -c1-8)" \
+          --previous "staging-previous" \
+          --interval 60 \
+          --duration 1800 > rollback-monitor.log 2>&1 &
+        
+        echo "✅ Rollback monitoring started"
+      env:
+        SLACK_STAGING_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ========================================
+  # Deploy to Production
+  # ========================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, security-scan]
+    if: github.event_name == 'release'
+    environment: 
+      name: production
+      url: https://writerly.app
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+        aws-region: us-west-2
+        
+    - name: Install deployment dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq
+        
+        # Install yq
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+        
+        # Install Terraform
+        wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+        sudo apt-get update && sudo apt-get install terraform
+        
+    - name: Extract release version
+      id: version
+      run: |
+        echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        
+    - name: Create pre-deployment backup
+      run: |
+        echo "🗄️ Creating pre-deployment backup..."
+        ./scripts/backup.sh full "pre-deploy-${{ steps.version.outputs.version }}"
+        
+    - name: Deploy to Production
+      run: |
+        chmod +x scripts/deploy.sh
+        ./scripts/deploy.sh deploy production \
+          --tag "${{ steps.version.outputs.version }}" \
+          --yes \
+          --verbose
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          
+    - name: Run production smoke tests
+      run: |
+        echo "🧪 Running production smoke tests..."
+        
+        # Health checks with retries
+        for i in {1..30}; do
+          if curl -f https://writerly.app/health; then
+            echo "✅ Health check passed!"
+            break
+          fi
+          echo "⏳ Health check retry ($i/30)..."
+          sleep 10
+        done
+        
+        # Core functionality tests
+        curl -f https://writerly.app/health/ready || exit 1
+        curl -f https://writerly.app/health/live || exit 1
+        curl -f https://writerly.app/health/metrics || exit 1
+        
+        echo "✅ Production smoke tests completed!"
+        
+    - name: Create deployment record
+      run: |
+        # Create GitHub deployment status
+        curl -X POST \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/deployments \
+          -d '{
+            "ref":"${{ github.sha }}",
+            "environment":"production",
+            "description":"Production deployment of ${{ steps.version.outputs.version }}",
+                         "auto_merge":false
+           }'
+           
+    - name: Start production rollback monitoring
+      run: |
+        echo "🔍 Starting rollback monitoring for production deployment..."
+        chmod +x scripts/monitor-rollback.sh
+        
+        # 운영환경 롤백 모니터링 시작 (1시간간)
+        nohup ./scripts/monitor-rollback.sh production \
+          --version "${{ steps.version.outputs.version }}" \
+          --previous "${{ env.PREVIOUS_STABLE_VERSION }}" \
+          --interval 30 \
+          --duration 3600 > production-rollback-monitor.log 2>&1 &
+        
+        echo "✅ Production rollback monitoring started"
+      env:
+        SLACK_PRODUCTION_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        PREVIOUS_STABLE_VERSION: ${{ github.event.release.prerelease && 'latest-stable' || format('v{0}', (github.event.release.tag_name | sub('v', '') | tonumber | add(-1))) }}
+
+  # ========================================
+  # Post-deployment tasks
+  # ========================================
+  post-deploy:
+    name: Post-deployment Tasks
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Send Slack notification
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        
+    - name: Update monitoring dashboards
+      run: |
+        # Update Grafana dashboards with new version
+        curl -X POST "${{ secrets.GRAFANA_API_URL }}/api/dashboards/db" \
+          -H "Authorization: Bearer ${{ secrets.GRAFANA_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          -d @monitoring/grafana-dashboard.json
+          
+    - name: Trigger performance tests
+      run: |
+        # Trigger load testing
+        curl -X POST "${{ secrets.LOAD_TEST_WEBHOOK }}" \
+          -H "Content-Type: application/json" \
+          -d '{"environment": "production", "version": "${{ github.ref_name }}"}' 

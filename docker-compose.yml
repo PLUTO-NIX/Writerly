@@ -16,9 +16,15 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # Slack 환경변수 (필요시 .env 파일에서 가져옴)
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - .:/app
     command: python app.py
+    networks:
+      - writerly-network
 
   # Celery Worker
   worker:
@@ -31,9 +37,28 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - .:/app
-    command: celery -A tasks.celery worker --loglevel=info
+    command: python run_worker.py
+    networks:
+      - writerly-network
+
+  # ngrok - 외부 터널링 (Slack 연동용)
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command:
+      - "http"
+      - "web:5000"
+    ports:
+      - "4040:4040" # ngrok 웹 UI
+    depends_on:
+      - web
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    networks:
+      - writerly-network
 
   # Redis (메시지 브로커)
   redis:
@@ -42,8 +67,10 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - writerly-network
 
-  # PostgreSQL 데이터베이스
+  # PostgreSQL 데이터베이스 (포트 충돌 해결)
   postgres:
     image: postgres:15-alpine
     environment:
@@ -51,10 +78,16 @@ services:
       - POSTGRES_USER=writerly
       - POSTGRES_PASSWORD=writerly
     ports:
-      - "5432:5432"
+      - "5433:5432" # 포트 변경으로 충돌 해결
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - writerly-network
 
 volumes:
   redis_data:
   postgres_data:
+
+networks:
+  writerly-network:
+    driver: bridge

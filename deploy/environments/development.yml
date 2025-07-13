@@ -1,0 +1,301 @@
+# 개발 환경 (Development) 배포 설정
+# 로컬 개발 및 기능 테스트용 환경
+
+metadata:
+  name: "development"
+  description: "개발자 로컬 테스트 및 기능 개발용 환경"
+  tier: "development"
+  cost_center: "engineering"
+  team: "development"
+  
+# 인프라 설정
+infrastructure:
+  # AWS 기본 설정
+  aws:
+    region: "us-west-2"
+    account_id: "${AWS_DEV_ACCOUNT_ID}"
+    
+  # 네트워킹
+  networking:
+    vpc_cidr: "10.10.0.0/16"
+    availability_zones:
+      - "us-west-2a"
+      - "us-west-2b"
+    subnets:
+      public:
+        - "10.10.1.0/24"
+        - "10.10.2.0/24"
+      private:
+        - "10.10.11.0/24"
+        - "10.10.12.0/24"
+      database:
+        - "10.10.21.0/24"
+        - "10.10.22.0/24"
+
+# 컴퓨팅 리소스
+compute:
+  # ECS 클러스터
+  ecs:
+    cluster_name: "writerly-dev"
+    capacity_providers: ["FARGATE_SPOT", "FARGATE"]
+    default_capacity_provider: "FARGATE_SPOT"  # 비용 절약
+    
+  # 서비스 설정
+  services:
+    web:
+      name: "writerly-web-dev"
+      cpu: 256      # 0.25 vCPU
+      memory: 512   # 512 MB
+      desired_count: 1
+      min_capacity: 1
+      max_capacity: 2
+      
+    worker:
+      name: "writerly-worker-dev"
+      cpu: 256
+      memory: 512
+      desired_count: 1
+      min_capacity: 1
+      max_capacity: 2
+      
+    beat:
+      name: "writerly-beat-dev"
+      cpu: 256
+      memory: 256
+      desired_count: 1
+
+# 데이터베이스
+database:
+  postgresql:
+    identifier: "writerly-dev-db"
+    engine: "postgres"
+    engine_version: "15.8"
+    instance_class: "db.t3.micro"
+    allocated_storage: 20
+    max_allocated_storage: 100
+    storage_type: "gp2"
+    backup_retention_period: 1
+    backup_window: "03:00-04:00"
+    maintenance_window: "sun:04:00-sun:05:00"
+    multi_az: false
+    publicly_accessible: false
+    deletion_protection: false
+    
+    # 개발 환경용 설정
+    skip_final_snapshot: true
+    auto_minor_version_upgrade: true
+    monitoring_interval: 0  # 상세 모니터링 비활성화
+    
+# 캐시
+cache:
+  redis:
+    cluster_id: "writerly-dev-redis"
+    node_type: "cache.t3.micro"
+    num_cache_nodes: 1
+    engine_version: "7.0"
+    port: 6379
+    parameter_group: "default.redis7"
+    
+    # 개발 환경용 설정
+    snapshot_retention_limit: 0  # 스냅샷 비활성화
+    snapshot_window: "03:00-05:00"
+    maintenance_window: "sun:05:00-sun:06:00"
+
+# 로드 밸런서
+load_balancer:
+  application_lb:
+    name: "writerly-dev-alb"
+    scheme: "internet-facing"
+    type: "application"
+    ip_address_type: "ipv4"
+    
+    # 리스너 설정
+    listeners:
+      - port: 80
+        protocol: "HTTP"
+        default_action: "redirect-to-https"
+      - port: 443
+        protocol: "HTTPS"
+        ssl_policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+        certificate_arn: "${SSL_CERT_ARN_DEV}"
+
+# 도메인 및 DNS
+domain:
+  primary: "dev.writerly.local"
+  api: "dev-api.writerly.local"
+  admin: "dev-admin.writerly.local"
+  
+  # Route53 설정
+  hosted_zone_id: "${ROUTE53_DEV_ZONE_ID}"
+  ttl: 300
+
+# 보안 설정
+security:
+  # WAF (개발환경에서는 비활성화)
+  waf:
+    enabled: false
+    
+  # 보안 그룹
+  security_groups:
+    web:
+      ingress:
+        - from_port: 80
+          to_port: 80
+          protocol: "tcp"
+          cidr_blocks: ["0.0.0.0/0"]
+        - from_port: 443
+          to_port: 443
+          protocol: "tcp"
+          cidr_blocks: ["0.0.0.0/0"]
+          
+    database:
+      ingress:
+        - from_port: 5432
+          to_port: 5432
+          protocol: "tcp"
+          source_security_group: "web"
+          
+  # SSL/TLS
+  ssl:
+    certificate_domain: "*.writerly.local"
+    validation_method: "DNS"
+
+# 환경 변수
+environment_variables:
+  # Flask 설정
+  FLASK_ENV: "development"
+  FLASK_DEBUG: "True"
+  SECRET_KEY: "${SECRET_KEY_DEV}"
+  
+  # 데이터베이스
+  DATABASE_URL: "postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_ENDPOINT}:5432/${DB_NAME}"
+  
+  # Redis
+  REDIS_URL: "redis://${REDIS_ENDPOINT}:6379/0"
+  
+  # Celery
+  CELERY_BROKER_URL: "redis://${REDIS_ENDPOINT}:6379/1"
+  CELERY_RESULT_BACKEND: "redis://${REDIS_ENDPOINT}:6379/2"
+  
+  # API 키
+  OPENAI_API_KEY: "${OPENAI_API_KEY_DEV}"
+  SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN_DEV}"
+  SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET_DEV}"
+  
+  # 로깅
+  LOG_LEVEL: "DEBUG"
+  LOG_FORMAT: "detailed"
+  
+  # 개발 전용 설정
+  ENABLE_DEBUG_TOOLBAR: "True"
+  MOCK_EXTERNAL_APIS: "False"
+  RATE_LIMITING_ENABLED: "False"
+  EMAIL_BACKEND: "console"
+
+# 모니터링
+monitoring:
+  # CloudWatch
+  cloudwatch:
+    log_group: "/aws/ecs/writerly-dev"
+    log_retention_days: 7
+    
+    # 메트릭 필터
+    metric_filters:
+      - name: "error_count"
+        pattern: "ERROR"
+        metric_name: "ErrorCount"
+        metric_namespace: "Writerly/Dev"
+        
+  # 알람 (개발환경에서는 최소화)
+  alarms:
+    enabled: false
+    
+  # 대시보드
+  dashboards:
+    enabled: true
+    name: "Writerly-Development"
+
+# 백업 및 복구
+backup:
+  database:
+    enabled: true
+    schedule: "0 6 * * 1"  # 매주 월요일 오전 6시
+    retention_days: 7
+    
+  # 자동 백업 비활성화 (개발 환경)
+  automated_backup: false
+
+# 배포 설정
+deployment:
+  # Docker 이미지
+  image:
+    repository: "${ECR_REGISTRY}/writerly-app"
+    tag: "dev-latest"
+    pull_policy: "Always"
+    
+  # 배포 전략
+  strategy:
+    type: "rolling_update"
+    max_unavailable: "50%"  # 개발환경에서는 빠른 배포
+    max_surge: "50%"
+    
+  # 헬스체크
+  health_check:
+    enabled: true
+    path: "/health"
+    interval: 30
+    timeout: 5
+    healthy_threshold: 2
+    unhealthy_threshold: 3
+    grace_period: 60  # 개발환경에서는 짧게
+    
+  # 자동 배포
+  auto_deploy:
+    enabled: true
+    branch: "develop"
+    
+# 개발 도구
+development_tools:
+  # 디버깅
+  debugging:
+    enabled: true
+    flask_debug: true
+    profiling: true
+    
+  # 핫 리로드
+  hot_reload:
+    enabled: true
+    watch_files: ["*.py", "templates/*", "static/*"]
+    
+  # 개발 서버
+  dev_server:
+    port: 5000
+    host: "0.0.0.0"
+    threaded: true
+    
+  # 테스트 데이터
+  test_data:
+    enabled: true
+    seed_database: true
+    sample_users: 10
+    sample_prompts: 20
+
+# 비용 최적화
+cost_optimization:
+  # 스팟 인스턴스 사용
+  use_spot_instances: true
+  spot_instance_percentage: 100
+  
+  # 자동 종료 (개발 시간 외)
+  auto_shutdown:
+    enabled: true
+    schedule: "0 20 * * 1-5"  # 평일 오후 8시
+    startup_schedule: "0 8 * * 1-5"  # 평일 오전 8시
+    
+  # 리소스 태깅
+  resource_tags:
+    Environment: "development"
+    Project: "writerly"
+    Team: "engineering"
+    CostCenter: "development"
+    AutoShutdown: "true" 

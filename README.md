@@ -59,14 +59,33 @@ Slack에서 AI를 사용하여 메시지를 처리하고 개선하는 슬랙 앱
 
 ## 🚀 빠른 시작
 
-### 1️⃣ 프로젝트 클론
+### 🐳 Docker 사용 (추천)
 
 ```bash
+# 1. 프로젝트 클론
 git clone https://github.com/your-username/writerly.git
 cd writerly
+
+# 2. 환경변수 설정
+cp env.dev.example .env
+# .env 파일을 열어서 실제 토큰으로 수정
+
+# 3. 모든 서비스 한번에 실행
+./start-all.ps1
+
+# 4. 시스템 상태 확인
+curl http://localhost:5000/health
+
+# 5. ngrok URL 확인
+# 브라우저에서 http://localhost:4040 접속
 ```
 
-### 2️⃣ 가상환경 설정
+### 💻 로컬 개발 환경 (수동 설정)
+
+<details>
+<summary>클릭하여 수동 설정 방법 보기</summary>
+
+#### 1️⃣ 가상환경 설정
 
 ```bash
 # 가상환경 생성
@@ -79,27 +98,26 @@ writerly_env\Scripts\activate
 source writerly_env/bin/activate
 ```
 
-### 3️⃣ 의존성 설치
+#### 2️⃣ 의존성 설치
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4️⃣ 환경변수 설정
+#### 3️⃣ 환경변수 설정
 
 ```bash
 # 환경변수 파일 복사
-cp .env.example .env
+cp env.dev.example .env
 
 # .env 파일 수정
 # SLACK_BOT_TOKEN=xoxb-your-bot-token
-# SLACK_CLIENT_ID=your-client-id
-# SLACK_CLIENT_SECRET=your-client-secret
+# SLACK_SIGNING_SECRET=your-signing-secret
+# NGROK_AUTHTOKEN=your-ngrok-authtoken
 # OPENAI_API_KEY=your-openai-api-key
-# REDIS_URL=redis://localhost:6379/0
 ```
 
-### 5️⃣ Redis 서버 시작
+#### 4️⃣ Redis 서버 시작
 
 ```bash
 # Windows (Docker 사용)
@@ -109,7 +127,7 @@ docker run -d --name redis-server -p 6379:6379 redis:alpine
 redis-server
 ```
 
-### 6️⃣ 데이터베이스 초기화
+#### 5️⃣ 데이터베이스 초기화
 
 ```bash
 # 테이블 생성
@@ -119,17 +137,22 @@ python migrate.py create
 python migrate.py test-data
 ```
 
-### 7️⃣ 애플리케이션 실행
+#### 6️⃣ 애플리케이션 실행
 
 ```bash
 # Flask 앱 실행
 python app.py
 
 # 새 터미널에서 Celery 워커 실행
-python -m celery -A tasks.ai_tasks worker --pool=solo --loglevel=info
+python run_worker.py
+
+# 새 터미널에서 ngrok 실행
+ngrok http 5000
 ```
 
-### 8️⃣ 시스템 상태 확인
+</details>
+
+### ✅ 시스템 상태 확인
 
 ```bash
 # 전체 시스템 상태 확인
@@ -141,17 +164,69 @@ curl http://localhost:5000/health/celery
 curl http://localhost:5000/health/openai
 ```
 
-## 🐳 Docker로 실행
+## 🐳 Docker로 모든 서비스 한번에 실행 (추천)
+
+### 🚀 원클릭 실행 (PowerShell)
 
 ```bash
-# 개발 환경 실행
-docker-compose -f docker-compose.dev.yml up -d
+# 모든 서비스 한번에 시작
+./start-all.ps1
+
+# 모든 서비스 한번에 중지
+./stop-all.ps1
+```
+
+### 🐳 Docker Compose 직접 사용
+
+```bash
+# 모든 서비스 시작 (Flask, Celery, Redis, PostgreSQL, ngrok)
+docker-compose up -d
+
+# 서비스 상태 확인
+docker-compose ps
 
 # 로그 확인
-docker-compose -f docker-compose.dev.yml logs -f
+docker-compose logs -f
 
-# 상태 확인
-docker-compose -f docker-compose.dev.yml ps
+# 특정 서비스 로그만 확인
+docker-compose logs web
+docker-compose logs worker
+docker-compose logs ngrok
+
+# 모든 서비스 중지
+docker-compose down
+```
+
+### 📋 실행되는 서비스들
+
+| 서비스 | 포트 | 설명 | 상태 |
+|--------|------|------|------|
+| **web** | 5000 | Flask 웹 애플리케이션 | ✅ |
+| **worker** | - | Celery 백그라운드 워커 | ✅ |
+| **redis** | 6379 | 메시지 브로커/캐시 | ✅ |
+| **postgres** | 5433 | 데이터베이스 | ✅ |
+| **ngrok** | 4040 | 외부 터널링 (Slack용) | ✅ |
+
+### 🔧 환경 설정
+
+```bash
+# 1. 환경변수 파일 복사
+cp env.dev.example .env
+
+# 2. .env 파일 편집 (실제 토큰으로 교체)
+# SLACK_BOT_TOKEN=xoxb-your-bot-token
+# SLACK_SIGNING_SECRET=your-signing-secret
+# NGROK_AUTHTOKEN=your-ngrok-authtoken
+# OPENAI_API_KEY=sk-your-openai-api-key
+```
+
+### 🌐 ngrok URL 확인
+
+```bash
+# ngrok 웹 UI 접속
+http://localhost:4040
+
+# 제공된 HTTPS URL을 Slack 앱 설정에 사용
 ```
 
 ## 📱 사용법
@@ -389,6 +464,9 @@ writerly/
 
 ### 📝 최근 업데이트 로그
 
+- **2025-01-13**: 🐳 **Docker 통합 완료** - 모든 서비스를 한 번에 실행 가능
+- **2025-01-13**: 🚀 **원클릭 실행** - start-all.ps1 스크립트로 간편 실행
+- **2025-01-13**: 🌐 **ngrok Docker 통합** - 외부 터널링까지 자동화
 - **2025-01-13**: 테스트 시스템 완료, 실제 Slack API 연결 성공
 - **2025-01-13**: OAuth 인증 구현 완료, 사용자 명의 메시지 게시
 - **2025-01-13**: UX 최적화 - 모달 즉시 닫기, 백그라운드 처리

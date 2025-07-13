@@ -215,14 +215,12 @@ class CLIParser:
                     'prompt_data': prompt
                 }
         
-        # 유사한 프롬프트 찾기
-        similar_prompts = self._find_similar_prompts(prompt_name, user_prompts)
-        error_message = f'"{prompt_name}" 프롬프트를 찾을 수 없습니다.'
-        
-        if similar_prompts:
-            error_message += f'\n혹시 다음 중 하나를 찾으시나요?\n' + '\n'.join([f'• {p}' for p in similar_prompts])
-        
-        return False, error_message, None
+        # 기본 프롬프트나 사용자 정의 프롬프트가 없으면 일회용 프롬프트로 처리
+        return True, '', {
+            'type': 'oneoff',
+            'value': prompt_name,
+            'prompt_text': prompt_name
+        }
     
     def _find_similar_prompts(self, prompt_name: str, user_prompts: List[Dict]) -> List[str]:
         """유사한 프롬프트 이름 찾기"""

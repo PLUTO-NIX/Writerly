@@ -497,13 +497,18 @@ def process_cli_mode(user_id, channel_id, parsed_data, thread_info=None):
             })
         
         # 프롬프트 타입 및 값 결정
+        oneoff_prompt = None
         if prompt_info:
             if prompt_info['type'] == 'default':
                 prompt_type = prompt_info['value']
                 custom_prompt_id = None
-            else:  # custom
+            elif prompt_info['type'] == 'custom':
                 prompt_type = 'custom'
                 custom_prompt_id = prompt_info['value']
+            elif prompt_info['type'] == 'oneoff':
+                prompt_type = 'oneoff'
+                custom_prompt_id = None
+                oneoff_prompt = prompt_info['prompt_text']
         else:
             # 기본 프롬프트 (전문적인 톤)
             prompt_type = 'professional'
@@ -535,7 +540,8 @@ def process_cli_mode(user_id, channel_id, parsed_data, thread_info=None):
                     prompt_type=prompt_type,
                     user_token=user_token,
                     custom_prompt_id=custom_prompt_id,
-                    thread_info=thread_info
+                    thread_info=thread_info,
+                    oneoff_prompt=oneoff_prompt
                 )
                 
                 # 태스크 등록

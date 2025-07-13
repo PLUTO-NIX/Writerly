@@ -1,27 +1,67 @@
-# Python 3.11 베이스 이미지 사용
-FROM python:3.11-slim
+# ========================================
+# Multi-stage build for optimized production image
+# ========================================
 
-# 작업 디렉토리 설정
-WORKDIR /app
+# Stage 1: Build stage
+FROM python:3.11-slim as builder
 
-# 시스템 의존성 설치
+# Build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
+    g++ \
+    libpq-dev \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Python 의존성 설치
+# Python build optimization
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
 
-# 애플리케이션 코드 복사
-COPY . .
+# ========================================
+# Stage 2: Runtime stage  
+# ========================================
+FROM python:3.11-slim as runtime
 
-# 포트 노출
-EXPOSE 5000
+# Runtime dependencies only
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# 환경 변수 설정
+# Create non-root user for security
+RUN groupadd -r writerly && useradd -r -g writerly writerly
+
+# Set working directory
+WORKDIR /app
+
+# Copy Python packages from builder stage
+COPY --from=builder /root/.local /home/writerly/.local
+
+# Copy application code
+COPY --chown=writerly:writerly . .
+
+# Environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV PATH=/home/writerly/.local/bin:$PATH
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
 
-# 애플리케이션 실행
+# Switch to non-root user
+USER writerly
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+# Expose port
+EXPOSE 5000
+
+# Start application
 CMD ["python", "app.py"] 

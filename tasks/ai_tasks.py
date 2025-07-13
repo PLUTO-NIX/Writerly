@@ -25,7 +25,7 @@ print("🚀 Celery eager 모드 활성화 - 태스크가 즉시 실행됩니다"
 
 
 @app.task(bind=True, name='process_ai_message')
-def process_ai_message(self, user_id, channel_id, text, prompt_type='professional', user_token=None, custom_prompt_id=None, thread_info=None):
+def process_ai_message(self, user_id, channel_id, text, prompt_type='professional', user_token=None, custom_prompt_id=None, thread_info=None, oneoff_prompt=None):
     """
     AI 메시지 처리 태스크
     
@@ -55,7 +55,7 @@ def process_ai_message(self, user_id, channel_id, text, prompt_type='professiona
         )
         
         # 2. AI 처리 (실제 OpenAI API 사용)
-        ai_result = process_with_ai(text, prompt_type, custom_prompt_id, user_id)
+        ai_result = process_with_ai(text, prompt_type, custom_prompt_id, user_id, oneoff_prompt)
         
         # AI 처리 실패 시 처리
         if not ai_result['success']:
@@ -269,7 +269,7 @@ def health_check(self):
         raise
 
 
-def process_with_ai(text, prompt_type, custom_prompt_id=None, user_id=None):
+def process_with_ai(text, prompt_type, custom_prompt_id=None, user_id=None, oneoff_prompt=None):
     """
     실제 AI 처리 함수
     """
@@ -288,7 +288,7 @@ def process_with_ai(text, prompt_type, custom_prompt_id=None, user_id=None):
         # 실제 AI 서비스 사용
         from services.ai_service import ai_service
         
-        result = ai_service.process_text(text, prompt_type, custom_prompt_id, user_id)
+        result = ai_service.process_text(text, prompt_type, custom_prompt_id, user_id, oneoff_prompt)
         
         # 결과 로깅
         if result['success']:

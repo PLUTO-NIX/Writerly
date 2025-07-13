@@ -1,0 +1,6 @@
+version: "2"
+tunnels:
+  web:
+    addr: "web:5000"
+    proto: http
+web_addr: 0.0.0.0:4040 

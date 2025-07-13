@@ -1,0 +1,414 @@
+# 스테이징 환경 (Staging) 배포 설정
+# 운영 배포 전 최종 검증용 환경
+
+metadata:
+  name: "staging"
+  description: "운영 배포 전 최종 검증 및 통합 테스트용 환경"
+  tier: "staging"
+  cost_center: "qa"
+  team: "platform"
+  
+# 인프라 설정
+infrastructure:
+  # AWS 기본 설정
+  aws:
+    region: "us-west-2"
+    account_id: "${AWS_STAGING_ACCOUNT_ID}"
+    
+  # 네트워킹
+  networking:
+    vpc_cidr: "10.20.0.0/16"
+    availability_zones:
+      - "us-west-2a"
+      - "us-west-2b"
+      - "us-west-2c"
+    subnets:
+      public:
+        - "10.20.1.0/24"
+        - "10.20.2.0/24"
+        - "10.20.3.0/24"
+      private:
+        - "10.20.11.0/24"
+        - "10.20.12.0/24"
+        - "10.20.13.0/24"
+      database:
+        - "10.20.21.0/24"
+        - "10.20.22.0/24"
+        - "10.20.23.0/24"
+
+# 컴퓨팅 리소스
+compute:
+  # ECS 클러스터
+  ecs:
+    cluster_name: "writerly-staging"
+    capacity_providers: ["FARGATE"]
+    default_capacity_provider: "FARGATE"
+    
+  # 서비스 설정
+  services:
+    web:
+      name: "writerly-web-staging"
+      cpu: 512      # 0.5 vCPU
+      memory: 1024  # 1 GB
+      desired_count: 2
+      min_capacity: 1
+      max_capacity: 4
+      
+    worker:
+      name: "writerly-worker-staging"
+      cpu: 512
+      memory: 1024
+      desired_count: 2
+      min_capacity: 1
+      max_capacity: 4
+      
+    beat:
+      name: "writerly-beat-staging"
+      cpu: 256
+      memory: 512
+      desired_count: 1
+
+# 데이터베이스
+database:
+  postgresql:
+    identifier: "writerly-staging-db"
+    engine: "postgres"
+    engine_version: "15.8"
+    instance_class: "db.t3.small"
+    allocated_storage: 50
+    max_allocated_storage: 200
+    storage_type: "gp2"
+    backup_retention_period: 7
+    backup_window: "03:00-04:00"
+    maintenance_window: "sun:04:00-sun:05:00"
+    multi_az: true  # 운영 유사 환경
+    publicly_accessible: false
+    deletion_protection: true
+    
+    # 스테이징 환경용 설정
+    skip_final_snapshot: false
+    auto_minor_version_upgrade: true
+    monitoring_interval: 60  # 기본 모니터링
+    performance_insights_enabled: true
+    
+# 캐시
+cache:
+  redis:
+    cluster_id: "writerly-staging-redis"
+    node_type: "cache.t3.small"
+    num_cache_nodes: 2
+    engine_version: "7.0"
+    port: 6379
+    parameter_group: "default.redis7"
+    
+    # 스테이징 환경용 설정
+    snapshot_retention_limit: 5
+    snapshot_window: "03:00-05:00"
+    maintenance_window: "sun:05:00-sun:06:00"
+    automatic_failover_enabled: true
+
+# 로드 밸런서
+load_balancer:
+  application_lb:
+    name: "writerly-staging-alb"
+    scheme: "internet-facing"
+    type: "application"
+    ip_address_type: "ipv4"
+    
+    # 리스너 설정
+    listeners:
+      - port: 80
+        protocol: "HTTP"
+        default_action: "redirect-to-https"
+      - port: 443
+        protocol: "HTTPS"
+        ssl_policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+        certificate_arn: "${SSL_CERT_ARN_STAGING}"
+    
+    # 액세스 로깅
+    access_logs:
+      enabled: true
+      bucket: "writerly-staging-access-logs"
+      prefix: "alb"
+
+# 도메인 및 DNS
+domain:
+  primary: "staging.writerly.app"
+  api: "staging-api.writerly.app"
+  admin: "staging-admin.writerly.app"
+  
+  # Route53 설정
+  hosted_zone_id: "${ROUTE53_STAGING_ZONE_ID}"
+  ttl: 300
+
+# 보안 설정
+security:
+  # WAF 활성화
+  waf:
+    enabled: true
+    web_acl_name: "writerly-staging-waf"
+    rules:
+      - name: "AWSManagedRulesCommonRuleSet"
+        priority: 1
+      - name: "AWSManagedRulesKnownBadInputsRuleSet"
+        priority: 2
+      - name: "RateLimitRule"
+        priority: 10
+        rate_limit: 2000  # 분당 요청 수
+        
+  # 보안 그룹
+  security_groups:
+    web:
+      ingress:
+        - from_port: 80
+          to_port: 80
+          protocol: "tcp"
+          cidr_blocks: ["0.0.0.0/0"]
+        - from_port: 443
+          to_port: 443
+          protocol: "tcp"
+          cidr_blocks: ["0.0.0.0/0"]
+          
+    database:
+      ingress:
+        - from_port: 5432
+          to_port: 5432
+          protocol: "tcp"
+          source_security_group: "web"
+          
+  # SSL/TLS
+  ssl:
+    certificate_domain: "*.writerly.app"
+    validation_method: "DNS"
+    
+  # 네트워크 ACL
+  network_acls:
+    enabled: true
+    
+  # VPC Flow Logs
+  vpc_flow_logs:
+    enabled: true
+    destination: "cloudwatch"
+
+# 환경 변수
+environment_variables:
+  # Flask 설정
+  FLASK_ENV: "staging"
+  FLASK_DEBUG: "False"
+  SECRET_KEY: "${SECRET_KEY_STAGING}"
+  
+  # 데이터베이스
+  DATABASE_URL: "postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_ENDPOINT}:5432/${DB_NAME}"
+  
+  # Redis
+  REDIS_URL: "redis://${REDIS_ENDPOINT}:6379/0"
+  
+  # Celery
+  CELERY_BROKER_URL: "redis://${REDIS_ENDPOINT}:6379/1"
+  CELERY_RESULT_BACKEND: "redis://${REDIS_ENDPOINT}:6379/2"
+  
+  # API 키
+  OPENAI_API_KEY: "${OPENAI_API_KEY_STAGING}"
+  SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN_STAGING}"
+  SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET_STAGING}"
+  
+  # 로깅
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  
+  # 스테이징 전용 설정
+  ENABLE_DEBUG_TOOLBAR: "False"
+  MOCK_EXTERNAL_APIS: "False"
+  RATE_LIMITING_ENABLED: "True"
+  EMAIL_BACKEND: "smtp"
+  
+  # 테스트 설정
+  ENABLE_TEST_ROUTES: "True"
+  SYNTHETIC_DATA_ENABLED: "True"
+
+# 모니터링
+monitoring:
+  # CloudWatch
+  cloudwatch:
+    log_group: "/aws/ecs/writerly-staging"
+    log_retention_days: 30
+    
+    # 메트릭 필터
+    metric_filters:
+      - name: "error_count"
+        pattern: "ERROR"
+        metric_name: "ErrorCount"
+        metric_namespace: "Writerly/Staging"
+      - name: "warning_count"
+        pattern: "WARNING"
+        metric_name: "WarningCount"
+        metric_namespace: "Writerly/Staging"
+      - name: "response_time"
+        pattern: "[timestamp, request_id, response_time = *]"
+        metric_name: "ResponseTime"
+        metric_namespace: "Writerly/Staging"
+        
+  # 알람
+  alarms:
+    enabled: true
+    notification_topic: "${SNS_STAGING_ALERTS}"
+    
+    rules:
+      - name: "HighErrorRate"
+        metric: "ErrorCount"
+        threshold: 10
+        period: 300
+        evaluation_periods: 2
+        
+      - name: "HighResponseTime"
+        metric: "ResponseTime"
+        threshold: 5000
+        period: 300
+        evaluation_periods: 2
+        
+      - name: "DatabaseConnections"
+        metric: "DatabaseConnections"
+        threshold: 80
+        period: 300
+        evaluation_periods: 1
+        
+  # 대시보드
+  dashboards:
+    enabled: true
+    name: "Writerly-Staging"
+    
+  # APM (Application Performance Monitoring)
+  apm:
+    enabled: true
+    service_name: "writerly-staging"
+
+# 백업 및 복구
+backup:
+  database:
+    enabled: true
+    schedule: "0 2 * * *"  # 매일 오전 2시
+    retention_days: 30
+    
+    # 교차 리전 백업
+    cross_region_backup:
+      enabled: true
+      destination_region: "us-east-1"
+      
+  # 자동 백업
+  automated_backup:
+    enabled: true
+    schedule: "0 1 * * *"  # 매일 오전 1시
+    
+  # 백업 테스트
+  backup_testing:
+    enabled: true
+    schedule: "0 0 * * 0"  # 매주 일요일 자정
+
+# 배포 설정
+deployment:
+  # Docker 이미지
+  image:
+    repository: "${ECR_REGISTRY}/writerly-app"
+    tag: "staging-${BUILD_NUMBER}"
+    pull_policy: "Always"
+    
+  # 배포 전략
+  strategy:
+    type: "blue_green"
+    canary_percentage: 10  # 10% 트래픽으로 시작
+    promotion_interval: 300  # 5분 간격으로 트래픽 증가
+    
+  # 헬스체크
+  health_check:
+    enabled: true
+    path: "/health"
+    interval: 30
+    timeout: 5
+    healthy_threshold: 2
+    unhealthy_threshold: 3
+    grace_period: 120
+    
+  # 자동 배포
+  auto_deploy:
+    enabled: true
+    branch: "develop"
+    
+  # 배포 후 테스트
+  post_deployment_tests:
+    enabled: true
+    test_suites:
+      - "smoke_tests"
+      - "integration_tests"
+      - "performance_tests"
+      
+# 네트워크 보안
+network_security:
+  # VPC 엔드포인트
+  vpc_endpoints:
+    - service: "s3"
+      type: "gateway"
+    - service: "secretsmanager"
+      type: "interface"
+    - service: "ssm"
+      type: "interface"
+      
+  # 네트워크 분할
+  network_segmentation:
+    enabled: true
+    
+# 성능 테스트
+performance_testing:
+  # 로드 테스트
+  load_testing:
+    enabled: true
+    schedule: "0 3 * * 1"  # 매주 월요일 오전 3시
+    duration: 1800  # 30분
+    target_rps: 100  # 초당 요청 수
+    
+  # 스트레스 테스트
+  stress_testing:
+    enabled: true
+    schedule: "0 4 * * 1"  # 매주 월요일 오전 4시
+    
+# 데이터 관리
+data_management:
+  # 데이터 마스킹
+  data_masking:
+    enabled: true
+    sensitive_fields:
+      - "email"
+      - "phone_number"
+      - "api_tokens"
+      
+  # 데이터 동기화 (운영에서 스테이징으로)
+  data_sync:
+    enabled: true
+    schedule: "0 6 * * 0"  # 매주 일요일 오전 6시
+    source_env: "production"
+    
+# 리소스 태깅
+resource_tags:
+  Environment: "staging"
+  Project: "writerly"
+  Team: "platform"
+  CostCenter: "qa"
+  Backup: "required"
+  Monitoring: "enabled"
+  
+# 비용 관리
+cost_management:
+  # 예산 알림
+  budget_alerts:
+    enabled: true
+    monthly_budget: 500  # USD
+    alert_thresholds: [50, 80, 100]  # 퍼센티지
+    
+  # 리소스 스케줄링 (비용 절약)
+  resource_scheduling:
+    enabled: true
+    scale_down:
+      schedule: "0 22 * * 1-5"  # 평일 오후 10시
+      min_capacity: 1
+    scale_up:
+      schedule: "0 7 * * 1-5"   # 평일 오전 7시
+      desired_capacity: 2 

@@ -40,7 +40,7 @@ class AIService:
         return self.is_available and self.client is not None
     
     def process_text(self, text: str, prompt_type: str = 'professional', 
-                    custom_prompt_id: Optional[int] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
+                    custom_prompt_id: Optional[int] = None, user_id: Optional[str] = None, oneoff_prompt: Optional[str] = None) -> Dict[str, Any]:
         """
         텍스트 AI 처리
         
@@ -49,6 +49,7 @@ class AIService:
             prompt_type (str): 기본 프롬프트 타입
             custom_prompt_id (int): 사용자 정의 프롬프트 ID
             user_id (str): 슬랙 사용자 ID (사용자 정의 프롬프트 조회용)
+            oneoff_prompt (str): 일회용 프롬프트 텍스트
             
         Returns:
             Dict[str, Any]: 처리 결과
@@ -64,7 +65,7 @@ class AIService:
         
         try:
             # 프롬프트 생성
-            system_prompt = self._get_system_prompt(prompt_type, custom_prompt_id, user_id)
+            system_prompt = self._get_system_prompt(prompt_type, custom_prompt_id, user_id, oneoff_prompt)
             
             # OpenAI API 호출 (재시도 로직 포함)
             start_time = time.time()
@@ -192,7 +193,7 @@ class AIService:
                 'retryable': False
             }
     
-    def _get_system_prompt(self, prompt_type: str, custom_prompt_id: Optional[int] = None, user_id: Optional[str] = None) -> str:
+    def _get_system_prompt(self, prompt_type: str, custom_prompt_id: Optional[int] = None, user_id: Optional[str] = None, oneoff_prompt: Optional[str] = None) -> str:
         """
         프롬프트 타입별 시스템 프롬프트 반환
         
@@ -200,10 +201,16 @@ class AIService:
             prompt_type (str): 프롬프트 타입
             custom_prompt_id (int): 사용자 정의 프롬프트 ID
             user_id (str): 슬랙 사용자 ID
+            oneoff_prompt (str): 일회용 프롬프트 텍스트
             
         Returns:
             str: 시스템 프롬프트
         """
+        
+        # 일회용 프롬프트 처리
+        if prompt_type == 'oneoff' and oneoff_prompt:
+            logger.info(f"일회용 프롬프트 사용: {oneoff_prompt[:50]}...")
+            return oneoff_prompt
         
         # 사용자 정의 프롬프트 처리
         if custom_prompt_id and user_id:

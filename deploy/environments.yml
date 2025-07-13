@@ -1,0 +1,240 @@
+# Writerly 배포 환경 설정
+# 개발, 스테이징, 운영 환경별 설정 관리
+
+environments:
+  # 개발 환경 (Development)
+  development:
+    name: "development"
+    description: "개발자 로컬 테스트 환경"
+    
+    # 도메인 설정
+    domain: "dev.writerly.local"
+    api_url: "https://dev-api.writerly.local"
+    
+    # 인프라 설정
+    region: "us-west-2"
+    availability_zones: ["us-west-2a", "us-west-2b"]
+    
+    # 컴퓨팅 리소스
+    instance_type: "t3.micro"
+    min_capacity: 1
+    max_capacity: 2
+    desired_capacity: 1
+    
+    # 데이터베이스
+    database:
+      engine: "postgres"
+      version: "15.8"
+      instance_class: "db.t3.micro"
+      allocated_storage: 20
+      backup_retention: 1
+      multi_az: false
+      
+    # Redis 캐시
+    redis:
+      node_type: "cache.t3.micro"
+      num_cache_nodes: 1
+      engine_version: "7.0"
+      
+    # 모니터링
+    monitoring:
+      enabled: true
+      log_level: "DEBUG"
+      metrics_retention: "7d"
+      
+    # 보안 설정
+    security:
+      encryption_at_rest: true
+      encryption_in_transit: true
+      enable_waf: false
+      
+    # 환경 변수
+    environment_variables:
+      FLASK_ENV: "development"
+      LOG_LEVEL: "DEBUG"
+      DEBUG: "True"
+      RATE_LIMITING: "False"
+
+  # 스테이징 환경 (Staging)
+  staging:
+    name: "staging"
+    description: "운영 배포 전 테스트 환경"
+    
+    # 도메인 설정
+    domain: "staging.writerly.app"
+    api_url: "https://staging-api.writerly.app"
+    
+    # 인프라 설정
+    region: "us-west-2"
+    availability_zones: ["us-west-2a", "us-west-2b", "us-west-2c"]
+    
+    # 컴퓨팅 리소스
+    instance_type: "t3.small"
+    min_capacity: 1
+    max_capacity: 3
+    desired_capacity: 2
+    
+    # 데이터베이스
+    database:
+      engine: "postgres"
+      version: "15.8"
+      instance_class: "db.t3.small"
+      allocated_storage: 50
+      backup_retention: 7
+      multi_az: true
+      
+    # Redis 캐시
+    redis:
+      node_type: "cache.t3.small"
+      num_cache_nodes: 2
+      engine_version: "7.0"
+      
+    # 모니터링
+    monitoring:
+      enabled: true
+      log_level: "INFO"
+      metrics_retention: "30d"
+      alerting: true
+      
+    # 보안 설정
+    security:
+      encryption_at_rest: true
+      encryption_in_transit: true
+      enable_waf: true
+      
+    # 환경 변수
+    environment_variables:
+      FLASK_ENV: "staging"
+      LOG_LEVEL: "INFO"
+      DEBUG: "False"
+      RATE_LIMITING: "True"
+
+  # 운영 환경 (Production)
+  production:
+    name: "production"
+    description: "실제 서비스 운영 환경"
+    
+    # 도메인 설정
+    domain: "writerly.app"
+    api_url: "https://api.writerly.app"
+    
+    # 인프라 설정
+    region: "us-west-2"
+    availability_zones: ["us-west-2a", "us-west-2b", "us-west-2c"]
+    
+    # 컴퓨팅 리소스
+    instance_type: "t3.medium"
+    min_capacity: 2
+    max_capacity: 10
+    desired_capacity: 3
+    
+    # 데이터베이스
+    database:
+      engine: "postgres"
+      version: "15.8"
+      instance_class: "db.r6g.large"
+      allocated_storage: 200
+      backup_retention: 30
+      multi_az: true
+      read_replica: true
+      
+    # Redis 캐시
+    redis:
+      node_type: "cache.r6g.large"
+      num_cache_nodes: 3
+      engine_version: "7.0"
+      cluster_enabled: true
+      
+    # 모니터링
+    monitoring:
+      enabled: true
+      log_level: "WARNING"
+      metrics_retention: "365d"
+      alerting: true
+      dashboard: true
+      
+    # 보안 설정
+    security:
+      encryption_at_rest: true
+      encryption_in_transit: true
+      enable_waf: true
+      ddos_protection: true
+      
+    # 환경 변수
+    environment_variables:
+      FLASK_ENV: "production"
+      LOG_LEVEL: "WARNING"
+      DEBUG: "False"
+      RATE_LIMITING: "True"
+
+# 공통 설정
+common:
+  # Docker 이미지 설정
+  docker:
+    registry: "writerly-registry"
+    image_name: "writerly-app"
+    tag_prefix: "v"
+    
+  # 네트워킹
+  networking:
+    vpc_cidr: "10.0.0.0/16"
+    public_subnets: ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+    private_subnets: ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+    database_subnets: ["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]
+    
+  # SSL/TLS 설정
+  ssl:
+    certificate_arn: ""  # 환경별로 설정
+    min_protocol_version: "TLSv1.2"
+    
+  # 로그 설정
+  logging:
+    cloudwatch_log_group: "/aws/ecs/writerly"
+    log_retention_days: 30
+    
+  # 백업 설정
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"  # 매일 새벽 2시
+    lifecycle_policy: "30d"
+    
+# 배포 전략
+deployment:
+  # 무중단 배포 설정
+  rolling_update:
+    max_unavailable: "25%"
+    max_surge: "25%"
+    
+  # Blue/Green 배포 설정
+  blue_green:
+    enabled: false  # 운영환경에서만 활성화
+    traffic_shift_percentage: 10
+    
+  # 헬스체크 설정
+  health_check:
+    path: "/health"
+    interval: 30
+    timeout: 5
+    healthy_threshold: 2
+    unhealthy_threshold: 3
+    
+  # 롤백 설정
+  rollback:
+    auto_rollback: true
+    failure_threshold: 10  # 10% 실패 시 자동 롤백
+    
+# 알림 설정
+notifications:
+  slack:
+    enabled: true
+    webhook_url_secret: "slack-webhook-url"
+    channels:
+      development: "#dev-alerts"
+      staging: "#staging-alerts"
+      production: "#production-alerts"
+      
+  email:
+    enabled: true
+    recipients:
+      - "devops@writerly.app"
+      - "team@writerly.app" 

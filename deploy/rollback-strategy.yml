@@ -1,0 +1,257 @@
+# Writerly 롤백 전략 설정
+# 자동 및 수동 롤백을 위한 종합 정책
+
+rollback_strategy:
+  # 자동 롤백 설정
+  automatic_rollback:
+    enabled: true
+    
+    # 트리거 조건
+    triggers:
+      # 헬스체크 실패
+      health_check_failure:
+        enabled: true
+        failure_threshold: 3  # 3회 연속 실패 시
+        check_interval: 30    # 30초 간격
+        timeout: 300         # 5분 후 자동 롤백
+      
+      # 에러율 임계값
+      error_rate:
+        enabled: true
+        threshold: 10        # 10% 이상 에러율
+        duration: 300        # 5분간 지속 시
+        sample_size: 100     # 최소 100개 요청
+      
+      # 응답 시간 증가
+      response_time:
+        enabled: true
+        threshold: 5000      # 5초 이상
+        percentile: 95       # 95퍼센타일
+        duration: 300        # 5분간 지속 시
+      
+      # 메모리 사용량
+      memory_usage:
+        enabled: true
+        threshold: 90        # 90% 이상
+        duration: 180        # 3분간 지속 시
+      
+      # CPU 사용량
+      cpu_usage:
+        enabled: true
+        threshold: 85        # 85% 이상
+        duration: 300        # 5분간 지속 시
+  
+  # 수동 롤백 설정
+  manual_rollback:
+    # 승인자 설정
+    approvers:
+      - role: "admin"
+        required: true
+      - role: "devops"
+        required: true
+      - role: "team_lead"
+        required: false  # 선택적
+    
+    # 롤백 창구 시간
+    maintenance_windows:
+      - "02:00-04:00"  # 새벽 2-4시
+      - "14:00-15:00"  # 오후 2-3시 (점심시간 후)
+    
+    # 긴급 롤백
+    emergency_rollback:
+      bypass_approval: true
+      conditions:
+        - "critical_security_issue"
+        - "complete_service_outage"
+        - "data_corruption_risk"
+
+# 환경별 롤백 정책
+environments:
+  development:
+    rollback_policy:
+      auto_rollback: true
+      approval_required: false
+      rollback_timeout: 180      # 3분
+      max_rollback_attempts: 3
+      
+  staging:
+    rollback_policy:
+      auto_rollback: true
+      approval_required: false   # 스테이징은 승인 불필요
+      rollback_timeout: 300      # 5분
+      max_rollback_attempts: 5
+      notification_channels:
+        - "#staging-alerts"
+      
+  production:
+    rollback_policy:
+      auto_rollback: true        # 운영도 자동 롤백 활성화
+      approval_required: false   # 긴급 상황에서는 즉시 롤백
+      rollback_timeout: 600      # 10분
+      max_rollback_attempts: 3
+      notification_channels:
+        - "#production-alerts"
+        - "#incident-response"
+      
+      # 운영 전용 추가 보호장치
+      protection:
+        business_hours_only: false  # 24/7 서비스
+        require_incident_ticket: true
+        post_rollback_analysis: true
+
+# 롤백 프로세스
+rollback_process:
+  # 1단계: 준비
+  preparation:
+    steps:
+      - name: "health_check"
+        description: "현재 시스템 상태 확인"
+        timeout: 60
+      - name: "backup_verification"
+        description: "백업 데이터 무결성 확인"
+        timeout: 120
+      - name: "dependency_check"
+        description: "외부 의존성 상태 확인"
+        timeout: 30
+  
+  # 2단계: 실행
+  execution:
+    steps:
+      - name: "traffic_drain"
+        description: "트래픽 점진적 차단"
+        timeout: 180
+        parallel: false
+      - name: "database_rollback"
+        description: "데이터베이스 스키마 롤백 (필요시)"
+        timeout: 300
+        parallel: false
+      - name: "application_rollback"
+        description: "애플리케이션 이전 버전 배포"
+        timeout: 300
+        parallel: false
+      - name: "configuration_restore"
+        description: "설정 파일 복원"
+        timeout: 60
+        parallel: true
+      - name: "cache_clear"
+        description: "캐시 초기화"
+        timeout: 30
+        parallel: true
+  
+  # 3단계: 검증
+  verification:
+    steps:
+      - name: "health_check"
+        description: "롤백 후 시스템 상태 확인"
+        timeout: 120
+      - name: "smoke_tests"
+        description: "기본 기능 테스트"
+        timeout: 180
+      - name: "performance_check"
+        description: "성능 지표 확인"
+        timeout: 120
+      - name: "traffic_restoration"
+        description: "트래픽 점진적 복원"
+        timeout: 300
+
+# 데이터베이스 롤백 전략
+database_rollback:
+  # 스키마 버전 관리
+  schema_versioning:
+    enabled: true
+    migration_rollback: true
+    data_backup_required: true
+  
+  # 롤백 가능 시간
+  rollback_window:
+    development: "24h"
+    staging: "72h"
+    production: "168h"  # 7일
+  
+  # 데이터 일관성 체크
+  consistency_checks:
+    - "foreign_key_constraints"
+    - "data_integrity"
+    - "index_validation"
+    - "backup_verification"
+
+# 모니터링 및 알림
+monitoring:
+  # 롤백 메트릭
+  metrics:
+    - "rollback_frequency"
+    - "rollback_duration"
+    - "rollback_success_rate"
+    - "time_to_rollback"
+    - "impact_duration"
+  
+  # 알림 설정
+  notifications:
+    channels:
+      slack:
+        webhooks:
+          development: "${SLACK_DEV_WEBHOOK}"
+          staging: "${SLACK_STAGING_WEBHOOK}"
+          production: "${SLACK_PROD_WEBHOOK}"
+      
+      email:
+        recipients:
+          critical: ["oncall@writerly.app", "cto@writerly.app"]
+          normal: ["devops@writerly.app", "team@writerly.app"]
+      
+      sms:
+        enabled: true
+        recipients: ["+1234567890"]  # 온콜 담당자
+        conditions: ["production_rollback", "critical_failure"]
+  
+  # 대시보드
+  dashboards:
+    grafana:
+      rollback_overview: "dashboard-rollback-overview"
+      deployment_health: "dashboard-deployment-health"
+    
+    cloudwatch:
+      custom_metrics: true
+      alarms: true
+
+# 롤백 후 조치
+post_rollback:
+  # 분석 및 리포트
+  analysis:
+    root_cause_analysis: true
+    impact_assessment: true
+    lessons_learned: true
+    improvement_plan: true
+  
+  # 문서화
+  documentation:
+    incident_report: true
+    rollback_log: true
+    decision_rationale: true
+  
+  # 팀 커뮤니케이션
+  communication:
+    stakeholder_notification: true
+    team_retrospective: true
+    customer_communication: true  # 필요시
+
+# 테스트 및 검증
+testing:
+  # 롤백 드릴
+  rollback_drills:
+    frequency: "monthly"
+    environments: ["staging"]
+    scenarios:
+      - "failed_deployment"
+      - "performance_degradation"
+      - "security_incident"
+      - "database_corruption"
+  
+  # 카나리 롤백
+  canary_rollback:
+    enabled: true
+    traffic_percentage: 10  # 10% 트래픽으로 시작
+    success_criteria:
+      error_rate: "<1%"
+      response_time: "<2000ms"
+      health_check: "passing" 
