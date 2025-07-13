@@ -66,8 +66,8 @@ def slack_events():
 @slack_bp.route('/commands/ai', methods=['POST'])
 @validate_and_sanitize
 @rate_limit(calls=30, period=60)  # 분당 30회 제한
-# @require_user_auth  # 테스트를 위해 일시적으로 비활성화
-# @require_usage_limits  # 테스트를 위해 일시적으로 비활성화
+@require_user_auth  # OAuth 인증 필수
+@require_usage_limits  # 사용량 제한 확인
 def ai_command():
     """
     /ai 슬래시 명령어 처리
@@ -152,6 +152,23 @@ def interactive_handler():
     
     import json
     payload = json.loads(request.form.get('payload'))
+    
+    # 사용자 인증 확인 (interactive 요청용)
+    user_id = payload.get('user', {}).get('id')
+    team_id = payload.get('team', {}).get('id')
+    
+    if user_id:
+        from utils.auth_middleware import check_user_authentication
+        auth_result = check_user_authentication(user_id, team_id)
+        
+        if not auth_result['authenticated']:
+            # 인증되지 않은 사용자에게 에러 메시지 반환
+            return jsonify({
+                'response_action': 'errors',
+                'errors': {
+                    'text_input': f'🔐 {auth_result["message"]} OAuth 인증이 필요합니다.'
+                }
+            })
     
     # 인터랙션 타입별 처리
     interaction_type = payload.get('type')
