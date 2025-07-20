@@ -1,0 +1,159 @@
+# Docker Compose for Writerly Local Development
+# This provides all necessary services for local development
+
+version: '3.8'
+
+services:
+  # Redis for session storage and caching
+  redis:
+    image: redis:7-alpine
+    container_name: writerly-redis-dev
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - writerly-network
+
+  # Main application (development mode)
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: development
+    container_name: writerly-app-dev
+    ports:
+      - "3000:3000"
+      - "9090:9090"  # Metrics port
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - LOG_LEVEL=debug
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_AUTH_TOKEN=
+      - ENABLE_METRICS=true
+      - ENABLE_TEST_ENDPOINTS=true
+      - MOCK_AI_RESPONSES=true
+    volumes:
+      - ../src:/app/src:ro
+      - ../tests:/app/tests:ro
+      - ../package.json:/app/package.json:ro
+      - ../tsconfig.json:/app/tsconfig.json:ro
+      - node_modules:/app/node_modules
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - writerly-network
+    command: npm run dev
+    stdin_open: true
+    tty: true
+
+  # Prometheus for local metrics collection (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: writerly-prometheus-dev
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - writerly-network
+    profiles:
+      - monitoring
+
+  # Grafana for local monitoring dashboards (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: writerly-grafana-dev
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - writerly-network
+    profiles:
+      - monitoring
+
+  # Ngrok for exposing local development to Slack (optional)
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: writerly-ngrok-dev
+    ports:
+      - "4040:4040"  # Ngrok web interface
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: 'http app:3000 --domain=${NGROK_DOMAIN:-writerly-dev.ngrok.io}'
+    depends_on:
+      - app
+    networks:
+      - writerly-network
+    profiles:
+      - ngrok
+
+volumes:
+  redis_data:
+    driver: local
+  node_modules:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  writerly-network:
+    driver: bridge
+
+# Usage Instructions:
+#
+# 1. Basic development setup:
+#    docker-compose -f config/docker-compose.dev.yml up -d
+#
+# 2. With monitoring (Prometheus + Grafana):
+#    docker-compose -f config/docker-compose.dev.yml --profile monitoring up -d
+#
+# 3. With ngrok for Slack webhooks:
+#    export NGROK_AUTHTOKEN=your_ngrok_token
+#    docker-compose -f config/docker-compose.dev.yml --profile ngrok up -d
+#
+# 4. Full development environment:
+#    docker-compose -f config/docker-compose.dev.yml --profile monitoring --profile ngrok up -d
+#
+# 5. View logs:
+#    docker-compose -f config/docker-compose.dev.yml logs -f app
+#
+# 6. Stop everything:
+#    docker-compose -f config/docker-compose.dev.yml --profile monitoring --profile ngrok down
+#
+# 7. Clean up volumes:
+#    docker-compose -f config/docker-compose.dev.yml down -v
+#
+# Access Points:
+# - Application: http://localhost:3000
+# - Metrics: http://localhost:9090
+# - Prometheus: http://localhost:9091 (if monitoring profile enabled)
+# - Grafana: http://localhost:3001 (admin/admin, if monitoring profile enabled)
+# - Ngrok Web Interface: http://localhost:4040 (if ngrok profile enabled)
+# - Redis: localhost:6379

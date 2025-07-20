@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Build outputs  
+dist/
+build/
+
+# Environment variables (보안상 제외)
+.env*
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secret files (보안상 제외)
+secrets/
+*.pem
+*.key
+*-service-account.json

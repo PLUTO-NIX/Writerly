@@ -1,0 +1,394 @@
+# DevSecOps 통합 배포 파이프라인
+# ADR-009: Fire-and-Forget 배포 패턴 적용
+# 보안 스캔 통합으로 취약점 자동 차단
+
+steps:
+  # =================================
+  # Phase 1: 환경 설정 및 의존성 설치
+  # =================================
+  - name: 'node:18-slim'
+    id: 'install-dependencies'
+    entrypoint: 'npm'
+    args: ['ci', '--only=production']
+    env:
+      - 'NODE_ENV=production'
+
+  - name: 'node:18-slim'
+    id: 'install-dev-dependencies'
+    entrypoint: 'npm'
+    args: ['ci']
+    env:
+      - 'NODE_ENV=development'
+
+  # =================================
+  # Phase 2: 보안 스캔 1 - 의존성 취약점 스캔
+  # =================================
+  - name: 'node:18-slim'
+    id: 'security-scan-dependencies'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔒 의존성 보안 스캔 시작..."
+        
+        # npm audit로 취약점 스캔
+        npm audit --audit-level=moderate || exit_code=$?
+        
+        if [ $${exit_code:-0} -ne 0 ]; then
+          echo "❌ 중간급 이상 보안 취약점 발견!"
+          echo "취약점이 있는 의존성이 발견되었습니다. 배포를 중단합니다."
+          npm audit
+          exit 1
+        fi
+        
+        echo "✅ 의존성 보안 스캔 통과"
+    waitFor: ['install-dev-dependencies']
+
+  # =================================
+  # Phase 3: 테스트 실행
+  # =================================
+  - name: 'node:18-slim'
+    id: 'run-tests'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🧪 테스트 실행 시작..."
+        
+        # 단위 테스트
+        npm run test:unit || {
+          echo "❌ 단위 테스트 실패!"
+          exit 1
+        }
+        
+        # 통합 테스트
+        npm run test:integration || {
+          echo "❌ 통합 테스트 실패!"
+          exit 1
+        }
+        
+        echo "✅ 모든 테스트 통과"
+    env:
+      - 'NODE_ENV=test'
+    waitFor: ['security-scan-dependencies']
+
+  # =================================
+  # Phase 4: 빌드 및 타입 체크
+  # =================================
+  - name: 'node:18-slim'
+    id: 'build-application'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔨 애플리케이션 빌드 시작..."
+        
+        # TypeScript 컴파일
+        npm run build || {
+          echo "❌ 빌드 실패!"
+          exit 1
+        }
+        
+        # 타입 체크
+        npm run typecheck || {
+          echo "❌ 타입 체크 실패!"
+          exit 1
+        }
+        
+        # 린트 체크
+        npm run lint || {
+          echo "❌ 린트 체크 실패!"
+          exit 1
+        }
+        
+        echo "✅ 빌드 및 정적 분석 완료"
+    waitFor: ['run-tests']
+
+  # =================================
+  # Phase 5: Docker 이미지 빌드
+  # =================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
+    args:
+      - 'build'
+      - '-t'
+      - '$_IMAGE_URL'
+      - '-f'
+      - 'deploy/Dockerfile.prod'
+      - '.'
+    waitFor: ['build-application']
+
+  # =================================
+  # Phase 6: 보안 스캔 2 - 컨테이너 취약점 스캔
+  # =================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
+    id: 'security-scan-container'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔒 컨테이너 보안 스캔 시작..."
+        
+        # Artifact Registry에 임시 푸시 (스캔용)
+        docker push $_IMAGE_URL
+        
+        # 컨테이너 이미지 취약점 스캔
+        gcloud artifacts docker images scan $_IMAGE_URL \
+          --format="value(response.scan.analysisStatus)" > scan_status.txt
+        
+        scan_status=$(cat scan_status.txt)
+        
+        if [[ "$scan_status" == "SCAN_STATUS_SUCCESS" ]]; then
+          # 취약점 결과 확인
+          gcloud artifacts docker images list-tags \
+            $(echo $_IMAGE_URL | cut -d':' -f1) \
+            --format="value(digest)" \
+            --filter="tags:$(echo $_IMAGE_URL | cut -d':' -f2)" > digest.txt
+          
+          digest=$(cat digest.txt)
+          
+          # 고위험 취약점 확인
+          critical_count=$(gcloud artifacts docker images describe \
+            $(echo $_IMAGE_URL | cut -d':' -f1)@$digest \
+            --format="value(image_basis.vulnerability_assessment.summary.critical)" || echo "0")
+          
+          high_count=$(gcloud artifacts docker images describe \
+            $(echo $_IMAGE_URL | cut -d':' -f1)@$digest \
+            --format="value(image_basis.vulnerability_assessment.summary.high)" || echo "0")
+          
+          echo "Critical 취약점: $critical_count개"
+          echo "High 취약점: $high_count개"
+          
+          # 임계값 확인 (Critical: 0, High: 5 이하)
+          if [[ ${critical_count:-0} -gt 0 ]] || [[ ${high_count:-0} -gt 5 ]]; then
+            echo "❌ 허용 수준을 초과하는 취약점 발견!"
+            echo "Critical: ${critical_count:-0}/0, High: ${high_count:-0}/5"
+            echo "배포를 중단합니다."
+            exit 1
+          fi
+          
+          echo "✅ 컨테이너 보안 스캔 통과"
+        else
+          echo "❌ 컨테이너 스캔 실패: $scan_status"
+          exit 1
+        fi
+    waitFor: ['build-image']
+
+  # =================================
+  # Phase 7: 보안 스캔 3 - Trivy 정적 분석
+  # =================================
+  - name: 'aquasec/trivy:latest'
+    id: 'security-scan-trivy'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        echo "🔒 Trivy 정적 분석 시작..."
+        
+        # Trivy로 이미지 스캔
+        trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress $_IMAGE_URL || {
+          echo "❌ Trivy에서 HIGH/CRITICAL 취약점 발견!"
+          echo "상세 정보:"
+          trivy image --severity HIGH,CRITICAL --no-progress $_IMAGE_URL
+          exit 1
+        }
+        
+        echo "✅ Trivy 정적 분석 통과"
+    waitFor: ['security-scan-container']
+
+  # =================================
+  # Phase 8: 최종 이미지 푸시 (보안 스캔 통과 시에만)
+  # =================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-image'
+    args: ['push', '$_IMAGE_URL']
+    waitFor: ['security-scan-trivy']
+
+  # =================================
+  # Phase 9: Cloud Run 배포 (즉시 배포 - ADR-009)
+  # =================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
+    id: 'deploy-to-cloudrun'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🚀 Cloud Run 배포 시작..."
+        
+        gcloud run deploy $_SERVICE_NAME \
+          --image $_IMAGE_URL \
+          --region $_REGION \
+          --platform managed \
+          --allow-unauthenticated \
+          --memory 512Mi \
+          --cpu 1 \
+          --concurrency 100 \
+          --max-instances 10 \
+          --min-instances 0 \
+          --timeout 60s \
+          --set-env-vars "NODE_ENV=production" \
+          --set-env-vars "VERTEX_AI_PROJECT_ID=$PROJECT_ID" \
+          --set-env-vars "VERTEX_AI_LOCATION=$_REGION" \
+          --set-env-vars "CLOUD_TASKS_PROJECT_ID=$PROJECT_ID" \
+          --set-env-vars "CLOUD_TASKS_LOCATION=$_REGION" \
+          --set-env-vars "CLOUD_TASKS_QUEUE=$_QUEUE_NAME" \
+          --port 8080 \
+          --traffic 100 \
+          --quiet
+        
+        echo "✅ Cloud Run 배포 완료"
+    waitFor: ['push-image']
+
+  # =================================
+  # Phase 10: 배포 상태 검증
+  # =================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
+    id: 'verify-deployment'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔍 배포 상태 검증 시작..."
+        
+        # 서비스 URL 획득
+        SERVICE_URL=$(gcloud run services describe $_SERVICE_NAME \
+          --region $_REGION \
+          --format="value(status.url)")
+        
+        echo "서비스 URL: $SERVICE_URL"
+        
+        # 서비스 상태 확인 (최대 5분 대기)
+        for i in {1..30}; do
+          if gcloud run services describe $_SERVICE_NAME --region $_REGION \
+            --format="value(status.conditions[0].status)" | grep -q "True"; then
+            echo "✅ 서비스 정상 상태 확인"
+            break
+          fi
+          
+          if [[ $i -eq 30 ]]; then
+            echo "❌ 서비스 상태 확인 타임아웃"
+            exit 1
+          fi
+          
+          echo "대기 중... ($i/30)"
+          sleep 10
+        done
+        
+        # 환경 변수에 SERVICE_URL 저장 (다음 단계에서 사용)
+        echo "SERVICE_URL=$SERVICE_URL" >> /workspace/deployment.env
+    waitFor: ['deploy-to-cloudrun']
+
+  # =================================
+  # Phase 11: Smoke Test 자동 실행
+  # =================================
+  - name: 'curlimages/curl:latest'
+    id: 'smoke-test'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        echo "🧪 Smoke Test 시작..."
+        
+        # 배포 환경 변수 로드
+        source /workspace/deployment.env
+        
+        # Health Check
+        echo "1️⃣ Health Check 테스트..."
+        if ! curl -f -s -m 30 "$SERVICE_URL/health" > /dev/null; then
+          echo "❌ Health Check 실패"
+          exit 1
+        fi
+        echo "✅ Health Check 통과"
+        
+        # API 응답 테스트
+        echo "2️⃣ API 응답 테스트..."
+        health_response=$(curl -s -m 30 "$SERVICE_URL/health")
+        if ! echo "$health_response" | grep -q "healthy"; then
+          echo "❌ Health API 응답 이상: $health_response"
+          exit 1
+        fi
+        echo "✅ API 응답 정상"
+        
+        # 응답 시간 테스트 (5초 이내)
+        echo "3️⃣ 응답 시간 테스트..."
+        response_time=$(curl -o /dev/null -s -w '%{time_total}' -m 10 "$SERVICE_URL/health")
+        response_time_ms=$(echo "$response_time * 1000" | bc -l)
+        
+        if (( $(echo "$response_time > 5.0" | bc -l) )); then
+          echo "❌ 응답 시간 초과: ${response_time}초"
+          exit 1
+        fi
+        echo "✅ 응답 시간 정상: ${response_time}초"
+        
+        echo "🎉 모든 Smoke Test 통과!"
+    waitFor: ['verify-deployment']
+
+  # =================================
+  # Phase 12: 배포 완료 알림 및 롤백 정보 제공
+  # =================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
+    id: 'deployment-summary'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "📋 배포 완료 요약"
+        echo "=================================="
+        
+        # 배포 정보 수집
+        source /workspace/deployment.env
+        REVISION=$(gcloud run services describe $_SERVICE_NAME \
+          --region $_REGION \
+          --format="value(status.latestRevision)")
+        
+        echo "✅ 배포 성공!"
+        echo "서비스: $_SERVICE_NAME"
+        echo "리전: $_REGION"
+        echo "이미지: $_IMAGE_URL"
+        echo "리비전: $REVISION"
+        echo "URL: $SERVICE_URL"
+        echo ""
+        echo "🔄 롤백이 필요한 경우:"
+        echo "gcloud run services update-traffic $_SERVICE_NAME \\"
+        echo "  --region $_REGION \\"
+        echo "  --to-revisions PREVIOUS_REVISION=100"
+        echo ""
+        echo "📊 현재 트래픽 분배:"
+        gcloud run services describe $_SERVICE_NAME \
+          --region $_REGION \
+          --format="table(status.traffic[].revisionName,status.traffic[].percent)"
+        echo ""
+        echo "🎊 배포 완료! 팀원들이 이제 Slack에서 '/ai' 명령어를 사용할 수 있습니다."
+    waitFor: ['smoke-test']
+
+# =================================
+# 환경 변수 설정
+# =================================
+substitutions:
+  _IMAGE_URL: 'gcr.io/$PROJECT_ID/writerly-slack-ai:$BUILD_ID'
+  _SERVICE_NAME: 'writerly-slack-ai'
+  _REGION: 'us-central1'
+  _QUEUE_NAME: 'ai-processing-queue'
+
+# =================================
+# 빌드 옵션
+# =================================
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true
+  substitutionOption: ALLOW_LOOSE
+
+# =================================
+# 타임아웃 설정 (20분)
+# =================================
+timeout: '1200s'
+
+# =================================
+# 로그 설정
+# =================================
+logsBucket: 'gs://$PROJECT_ID-build-logs'
+
+# =================================
+# 빌드 완료 시 알림 (선택사항)
+# =================================
+# images: ['$_IMAGE_URL']

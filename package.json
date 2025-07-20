@@ -1,0 +1,68 @@
+{
+  "name": "slack-ai-bot",
+  "version": "1.0.0",
+  "main": "dist/simple-app.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node dist/app.js",
+    "dev": "nodemon src/app.ts",
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:unit": "jest tests/unit",
+    "test:integration": "jest tests/integration",
+    "test:e2e": "jest tests/e2e",
+    "test:performance": "jest tests/e2e/performance.test.ts",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "format": "prettier --write src/**/*.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google-cloud/logging": "^11.0.0",
+    "@google-cloud/monitoring": "^3.0.0",
+    "@google-cloud/secret-manager": "^4.2.0",
+    "@google-cloud/tasks": "^4.0.0",
+    "@google-cloud/vertexai": "^1.4.0",
+    "@slack/bolt": "^3.14.0",
+    "bcrypt": "^5.1.1",
+    "express": "^4.18.0",
+    "express-rate-limit": "^7.1.0",
+    "google-auth-library": "^9.0.0",
+    "ioredis": "^5.3.2",
+    "joi": "^17.9.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/express": "^4.17.0",
+    "@types/jest": "^29.0.0",
+    "@types/node": "^18.0.0",
+    "@types/supertest": "^6.0.3",
+    "@types/uuid": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint": "^8.0.0",
+    "husky": "^8.0.0",
+    "jest": "^29.0.0",
+    "nodemon": "^3.0.0",
+    "prettier": "^3.0.0",
+    "supertest": "^6.0.0",
+    "ts-jest": "^29.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "slack",
+    "ai",
+    "bot",
+    "vertex-ai"
+  ],
+  "author": "",
+  "license": "ISC",
+  "description": "Slack AI Assistant Bot using Vertex AI"
+}

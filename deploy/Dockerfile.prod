@@ -1,0 +1,108 @@
+# 프로덕션용 Dockerfile - 보안 강화 및 최적화
+# Multi-stage build로 이미지 크기 최소화
+
+# =================================
+# Stage 1: Build Stage
+# =================================
+FROM node:18-alpine AS builder
+
+# 보안: non-root 사용자 생성
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# 작업 디렉토리 설정
+WORKDIR /app
+
+# 의존성 파일 복사 (캐시 최적화)
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# 프로덕션 의존성만 설치
+RUN npm ci --only=production && npm cache clean --force
+
+# 개발 의존성 설치 (빌드용)
+COPY package*.json ./
+RUN npm ci
+
+# 소스 코드 복사
+COPY src/ ./src/
+
+# TypeScript 빌드
+RUN npm run build
+
+# 불필요한 개발 의존성 제거
+RUN npm prune --production
+
+# =================================
+# Stage 2: Production Stage
+# =================================
+FROM node:18-alpine AS production
+
+# 보안 업데이트 및 필수 패키지만 설치
+RUN apk update && \
+    apk add --no-cache \
+    ca-certificates \
+    dumb-init \
+    && rm -rf /var/cache/apk/*
+
+# 보안: non-root 사용자 생성
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S appuser -u 1001 -G nodejs
+
+# 작업 디렉토리 설정
+WORKDIR /app
+
+# 빌드된 파일 복사 (builder stage에서)
+COPY --from=builder --chown=appuser:nodejs /app/dist ./dist
+COPY --from=builder --chown=appuser:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=appuser:nodejs /app/package*.json ./
+
+# 보안: 디렉토리 권한 설정
+RUN chown -R appuser:nodejs /app
+RUN chmod -R 755 /app
+
+# 보안: non-root 사용자로 전환
+USER appuser
+
+# 환경 변수 설정
+ENV NODE_ENV=production
+ENV PORT=8080
+
+# 보안: 불필요한 권한 제거
+RUN chmod -R o-rwx /app
+
+# 헬스체크 설정
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').request({port:8080,path:'/health',timeout:2000},(r)=>{process.exit(r.statusCode===200?0:1)}).end()"
+
+# 포트 노출
+EXPOSE 8080
+
+# 보안: 시그널 처리를 위한 dumb-init 사용
+ENTRYPOINT ["dumb-init", "--"]
+
+# 애플리케이션 시작
+CMD ["node", "dist/index.js"]
+
+# =================================
+# 메타데이터 라벨
+# =================================
+LABEL maintainer="Writerly Team"
+LABEL version="1.0.0"
+LABEL description="Writerly Slack AI Assistant - Production Image"
+LABEL security.scan="enabled"
+LABEL build.date="2025-01-19"
+
+# =================================
+# 보안 설정
+# =================================
+# 임시 파일 정리
+RUN rm -rf /tmp/* /var/tmp/*
+
+# 민감한 파일 제거
+RUN find /app -name "*.log" -delete || true
+RUN find /app -name ".env*" -delete || true
+RUN find /app -name "*.key" -delete || true
+
+# 파일 시스템 읽기 전용 설정 (런타임에서 적용)
+VOLUME ["/tmp"]

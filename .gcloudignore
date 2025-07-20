@@ -1,0 +1,39 @@
+# Ignore common files that shouldn't be uploaded to Cloud Build
+node_modules/
+*.log
+.env*
+.git/
+.gitignore
+.dockerignore
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Keep essential build files
+!package.json
+!package-lock.json
+!tsconfig.json
+!Dockerfile
+
+# Keep source code
+!src/
+!tests/
+
+# Ignore test coverage and build outputs when building
+coverage/
+dist/
+build/
+
+# Ignore documentation and deployment scripts (for build)
+DOCS/
+README.md
+deploy/
+scripts/
+config/
+
+# Ignore Docker Compose files
+docker-compose*.yml

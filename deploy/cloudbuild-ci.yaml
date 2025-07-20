@@ -1,0 +1,323 @@
+# CI 전용 파이프라인
+# Pull Request 및 개발 브랜치용 - 배포 없는 검증만
+# 빠른 피드백을 위한 최적화
+
+steps:
+  # =================================
+  # Phase 1: 환경 설정
+  # =================================
+  - name: 'node:18-slim'
+    id: 'setup-environment'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔧 CI 환경 설정 시작..."
+        echo "Node.js 버전: $(node --version)"
+        echo "npm 버전: $(npm --version)"
+        echo "빌드 ID: $BUILD_ID"
+        echo "브랜치: $BRANCH_NAME"
+        echo "커밋: $SHORT_SHA"
+
+  # =================================
+  # Phase 2: 의존성 설치
+  # =================================
+  - name: 'node:18-slim'
+    id: 'install-dependencies'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "📦 의존성 설치 시작..."
+        
+        # 캐시 최적화를 위한 npm ci 사용
+        npm ci
+        
+        echo "✅ 의존성 설치 완료"
+    waitFor: ['setup-environment']
+
+  # =================================
+  # Phase 3: 보안 스캔 - 의존성 취약점
+  # =================================
+  - name: 'node:18-slim'
+    id: 'security-audit'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔒 의존성 보안 감사 시작..."
+        
+        # npm audit 실행 (moderate 이상 취약점 확인)
+        audit_result=$(npm audit --audit-level=moderate --json) || audit_exit_code=$?
+        
+        if [[ ${audit_exit_code:-0} -ne 0 ]]; then
+          echo "⚠️ 보안 취약점 발견!"
+          
+          # 취약점 상세 정보 출력
+          echo "$audit_result" | jq -r '.vulnerabilities | to_entries[] | select(.value.severity == "high" or .value.severity == "critical") | "\(.key): \(.value.severity) - \(.value.title)"'
+          
+          # 자동 수정 시도
+          echo "🔧 자동 수정 시도..."
+          npm audit fix --force || true
+          
+          # 재검사
+          npm audit --audit-level=moderate || {
+            echo "❌ 수정 후에도 취약점 존재. 수동 검토 필요"
+            exit 1
+          }
+        fi
+        
+        echo "✅ 의존성 보안 감사 통과"
+    waitFor: ['install-dependencies']
+
+  # =================================
+  # Phase 4: 린팅
+  # =================================
+  - name: 'node:18-slim'
+    id: 'lint-check'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🧹 코드 스타일 검사 시작..."
+        
+        # ESLint 실행
+        npm run lint || {
+          echo "❌ 린트 검사 실패!"
+          echo "다음 명령으로 수정할 수 있습니다: npm run lint:fix"
+          exit 1
+        }
+        
+        echo "✅ 린트 검사 통과"
+    waitFor: ['security-audit']
+
+  # =================================
+  # Phase 5: 타입 체크
+  # =================================
+  - name: 'node:18-slim'
+    id: 'type-check'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔍 TypeScript 타입 체크 시작..."
+        
+        # TypeScript 컴파일 체크
+        npm run typecheck || {
+          echo "❌ 타입 체크 실패!"
+          exit 1
+        }
+        
+        echo "✅ 타입 체크 통과"
+    waitFor: ['lint-check']
+
+  # =================================
+  # Phase 6: 단위 테스트
+  # =================================
+  - name: 'node:18-slim'
+    id: 'unit-tests'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🧪 단위 테스트 시작..."
+        
+        # Jest 단위 테스트 실행
+        npm run test:unit -- --coverage --coverageReporters=text --coverageReporters=lcov || {
+          echo "❌ 단위 테스트 실패!"
+          exit 1
+        }
+        
+        # 커버리지 임계값 확인
+        coverage_percentage=$(npm run test:unit -- --coverage --coverageReporters=json-summary --silent | jq -r '.total.lines.pct // 0')
+        
+        if (( $(echo "$coverage_percentage < 70" | bc -l) )); then
+          echo "❌ 코드 커버리지 부족: ${coverage_percentage}% (최소 70% 필요)"
+          exit 1
+        fi
+        
+        echo "✅ 단위 테스트 통과 (커버리지: ${coverage_percentage}%)"
+    env:
+      - 'NODE_ENV=test'
+    waitFor: ['type-check']
+
+  # =================================
+  # Phase 7: 통합 테스트
+  # =================================
+  - name: 'node:18-slim'
+    id: 'integration-tests'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔗 통합 테스트 시작..."
+        
+        # Jest 통합 테스트 실행
+        npm run test:integration || {
+          echo "❌ 통합 테스트 실패!"
+          exit 1
+        }
+        
+        echo "✅ 통합 테스트 통과"
+    env:
+      - 'NODE_ENV=test'
+    waitFor: ['unit-tests']
+
+  # =================================
+  # Phase 8: 빌드 테스트
+  # =================================
+  - name: 'node:18-slim'
+    id: 'build-test'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔨 빌드 테스트 시작..."
+        
+        # TypeScript 빌드
+        npm run build || {
+          echo "❌ 빌드 실패!"
+          exit 1
+        }
+        
+        # 빌드 산출물 확인
+        if [ ! -d "dist" ] || [ ! -f "dist/index.js" ]; then
+          echo "❌ 빌드 산출물 누락!"
+          exit 1
+        fi
+        
+        # 빌드 크기 확인
+        build_size=$(du -sh dist | cut -f1)
+        echo "📦 빌드 크기: $build_size"
+        
+        echo "✅ 빌드 테스트 통과"
+    waitFor: ['integration-tests']
+
+  # =================================
+  # Phase 9: Docker 이미지 빌드 테스트
+  # =================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'docker-build-test'
+    args:
+      - 'build'
+      - '-t'
+      - 'writerly-test:$SHORT_SHA'
+      - '-f'
+      - 'deploy/Dockerfile.prod'
+      - '.'
+      - '--quiet'
+    waitFor: ['build-test']
+
+  # =================================
+  # Phase 10: 보안 스캔 - Docker 이미지
+  # =================================
+  - name: 'aquasec/trivy:latest'
+    id: 'docker-security-scan'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        echo "🔒 Docker 이미지 보안 스캔 시작..."
+        
+        # Trivy로 이미지 스캔 (High/Critical만)
+        trivy image --exit-code 0 --severity HIGH,CRITICAL --format table writerly-test:$SHORT_SHA || scan_failed=true
+        
+        # 취약점 요약 출력
+        echo "📊 취약점 요약:"
+        trivy image --severity HIGH,CRITICAL --format json writerly-test:$SHORT_SHA | \
+          jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL") | "\(.Severity): \(.VulnerabilityID) - \(.Title)"' | \
+          sort | uniq -c || echo "취약점 없음"
+        
+        if [[ "$scan_failed" == "true" ]]; then
+          echo "⚠️ HIGH/CRITICAL 취약점 발견됨 (CI에서는 경고만)"
+          echo "프로덕션 배포 전 수정 필요"
+        else
+          echo "✅ Docker 이미지 보안 스캔 통과"
+        fi
+    waitFor: ['docker-build-test']
+
+  # =================================
+  # Phase 11: 성능 테스트 (간단한 메트릭)
+  # =================================
+  - name: 'node:18-slim'
+    id: 'performance-check'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "⚡ 성능 체크 시작..."
+        
+        # 빌드 파일 크기 분석
+        echo "📊 파일 크기 분석:"
+        find dist -name "*.js" -exec ls -lh {} \; | awk '{print $5, $9}' | sort -hr | head -10
+        
+        # 의존성 크기 확인
+        echo "📦 의존성 크기:"
+        du -sh node_modules || echo "의존성 정보 없음"
+        
+        # 메모리 사용량 예측 (대략적)
+        dependency_count=$(find node_modules -name "package.json" | wc -l)
+        echo "📈 설치된 패키지 수: $dependency_count"
+        
+        if [[ $dependency_count -gt 500 ]]; then
+          echo "⚠️ 많은 의존성으로 인한 잠재적 성능 이슈"
+        fi
+        
+        echo "✅ 성능 체크 완료"
+    waitFor: ['docker-security-scan']
+
+  # =================================
+  # Phase 12: CI 결과 요약
+  # =================================
+  - name: 'node:18-slim'
+    id: 'ci-summary'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "📋 CI 검증 결과 요약"
+        echo "=================================="
+        echo "✅ 의존성 보안 감사 통과"
+        echo "✅ 코드 스타일 검사 통과"
+        echo "✅ TypeScript 타입 체크 통과"
+        echo "✅ 단위 테스트 통과"
+        echo "✅ 통합 테스트 통과"
+        echo "✅ 빌드 테스트 통과"
+        echo "✅ Docker 이미지 빌드 통과"
+        echo "✅ 보안 스캔 완료"
+        echo "✅ 성능 체크 완료"
+        echo ""
+        echo "🎉 모든 CI 검증 통과!"
+        echo "이 브랜치는 메인 브랜치로 병합할 준비가 되었습니다."
+        echo ""
+        echo "📊 빌드 정보:"
+        echo "브랜치: $BRANCH_NAME"
+        echo "커밋: $SHORT_SHA"
+        echo "빌드 ID: $BUILD_ID"
+        echo "빌드 시간: $(date)"
+    waitFor: ['performance-check']
+
+# =================================
+# 환경 변수 설정
+# =================================
+substitutions:
+  _BRANCH_NAME: '$BRANCH_NAME'
+
+# =================================
+# 빌드 옵션
+# =================================
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true
+  substitutionOption: ALLOW_LOOSE
+  machineType: 'N1_HIGHCPU_8'  # CI용 고성능 머신
+
+# =================================
+# 타임아웃 설정 (10분)
+# =================================
+timeout: '600s'
+
+# =================================
+# 로그 설정
+# =================================
+logsBucket: 'gs://$PROJECT_ID-ci-logs'

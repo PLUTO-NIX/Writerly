@@ -1,0 +1,332 @@
+# GitHub Actions CI 워크플로우
+# Pull Request 및 Push 이벤트 시 자동 실행
+
+name: 🚀 CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:  # 수동 실행 허용
+
+# 동시 실행 제한 (같은 브랜치에서 중복 실행 방지)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =================================
+  # Job 1: 기본 검증 (빠른 피드백)
+  # =================================
+  basic-checks:
+    name: 🔍 Basic Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 전체 히스토리 (보안 스캔용)
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🧹 Lint Check
+        run: npm run lint
+
+      - name: 🔍 Type Check
+        run: npm run typecheck
+
+      - name: 🔒 Security Audit
+        run: |
+          # npm audit 실행 (moderate 이상 취약점 확인)
+          npm audit --audit-level=moderate || audit_failed=true
+          
+          if [[ "$audit_failed" == "true" ]]; then
+            echo "⚠️ 보안 취약점 발견! 자동 수정 시도..."
+            npm audit fix --force
+            
+            # 재검사
+            npm audit --audit-level=moderate || {
+              echo "❌ 수정 후에도 취약점 존재"
+              npm audit
+              exit 1
+            }
+          fi
+
+  # =================================
+  # Job 2: 테스트 실행 (단위 + 통합)
+  # =================================
+  tests:
+    name: 🧪 Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: basic-checks
+    
+    strategy:
+      matrix:
+        node-version: ['18', '20']  # 다중 Node.js 버전 테스트
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🧪 Run Unit Tests
+        run: npm run test:unit -- --coverage --coverageReporters=text --coverageReporters=lcov
+        env:
+          NODE_ENV: test
+
+      - name: 🔗 Run Integration Tests
+        run: npm run test:integration
+        env:
+          NODE_ENV: test
+
+      - name: 📊 Upload Coverage to Codecov
+        if: matrix.node-version == '18'  # 한 버전에서만 커버리지 업로드
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: 📈 Coverage Comment
+        if: github.event_name == 'pull_request' && matrix.node-version == '18'
+        uses: romeovs/lcov-reporter-action@v0.3.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          lcov-file: ./coverage/lcov.info
+
+  # =================================
+  # Job 3: 빌드 및 Docker 테스트
+  # =================================
+  build:
+    name: 🔨 Build & Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: basic-checks
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔨 Build Application
+        run: npm run build
+
+      - name: 📦 Check Build Output
+        run: |
+          if [ ! -d "dist" ] || [ ! -f "dist/index.js" ]; then
+            echo "❌ 빌드 산출물 누락!"
+            exit 1
+          fi
+          
+          build_size=$(du -sh dist | cut -f1)
+          echo "📦 빌드 크기: $build_size"
+
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔨 Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./deploy/Dockerfile.prod
+          push: false
+          tags: writerly-test:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 🔒 Run Trivy Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'writerly-test:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '0'  # CI에서는 실패하지 않음
+
+      - name: 📊 Upload Trivy Results to GitHub Security Tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # =================================
+  # Job 4: E2E 테스트 (선택적)
+  # =================================
+  e2e-tests:
+    name: 🎯 E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [tests, build]
+    if: github.event_name == 'pull_request'  # PR에서만 실행
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🎯 Run E2E Tests
+        run: npm run test:e2e
+        env:
+          NODE_ENV: test
+
+  # =================================
+  # Job 5: Google Cloud Build 트리거 (메인 브랜치)
+  # =================================
+  trigger-cloud-build:
+    name: ☁️ Trigger Cloud Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [tests, build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: 🔐 Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: 🔧 Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: 🚀 Trigger Cloud Build Deploy
+        run: |
+          gcloud builds submit --no-source \
+            --config=deploy/cloudbuild.yaml \
+            --substitutions=_IMAGE_TAG=${{ github.sha }}
+
+  # =================================
+  # Job 6: 결과 요약 및 알림
+  # =================================
+  summary:
+    name: 📋 Summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [basic-checks, tests, build]
+    
+    steps:
+      - name: 📊 Check Results
+        run: |
+          echo "## 🚀 CI Pipeline Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.basic-checks.result }}" == "success" ]]; then
+            echo "✅ Basic Checks: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Basic Checks: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.tests.result }}" == "success" ]]; then
+            echo "✅ Tests: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Tests: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "✅ Build: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Build: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Actor:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Event:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: 💬 Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('🚀 CI Pipeline Results')
+            );
+            
+            const status = [
+              '${{ needs.basic-checks.result }}',
+              '${{ needs.tests.result }}',
+              '${{ needs.build.result }}'
+            ].every(result => result === 'success') ? '✅ All Checks Passed' : '❌ Some Checks Failed';
+            
+            const body = `## 🚀 CI Pipeline Results
+            
+            ${status}
+            
+            ### 📊 Detailed Results
+            - 🔍 Basic Checks: ${{ needs.basic-checks.result }}
+            - 🧪 Tests: ${{ needs.tests.result }}
+            - 🔨 Build: ${{ needs.build.result }}
+            
+            ### 📈 Information
+            - **Commit:** \`${{ github.sha }}\`
+            - **Build Time:** ${new Date().toLocaleString()}
+            
+            ---
+            *Automated by GitHub Actions*`;
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+# =================================
+# 환경 변수 및 시크릿
+# =================================
+env:
+  NODE_ENV: test
