@@ -6,6 +6,9 @@ import { AdvancedSlackParser, ParsedCommand, FormatMetadata } from './parsers/Ad
 import { FormatDetector } from './formatters/FormatDetector';
 import { FormatAwarePrompts, PromptConfig } from './prompts/FormatAwarePrompts';
 
+// Firestore 기반 인증 서비스
+import { authService } from './services/firestore-auth.service';
+
 const app = express();
 const PORT = process.env.PORT || 8080;
 
@@ -29,8 +32,8 @@ const SLACK_CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET || '';
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || '';
 const BASE_URL = process.env.BASE_URL || 'https://writerly-177365346300.us-central1.run.app';
 
-// Simple in-memory session storage (for minimal implementation)
-const sessionStore = new Map<string, any>();
+// Simple in-memory session storage (for minimal implementation) - DEPRECATED: Replaced with Firestore
+// const sessionStore = new Map<string, any>(); // Firestore 로 대체됨
 
 // Bot client for sending auth prompts
 async function sendBotMessage(channel: string, text: string, authUrl?: string): Promise<void> {
@@ -162,26 +165,18 @@ async function sendUserMessage(channel: string, text: string, userToken: string)
 }
 
 // Check if user is authenticated
-function isUserAuthenticated(userId: string, teamId: string): boolean {
-  const sessionKey = `${userId}:${teamId}`;
-  const session = sessionStore.get(sessionKey);
-  return !!(session && session.access_token);
+async function isUserAuthenticated(userId: string, teamId: string): Promise<boolean> {
+  return await authService.isAuthenticated(userId, teamId);
 }
 
 // Get user OAuth token
-function getUserToken(userId: string, teamId: string): string | null {
-  const sessionKey = `${userId}:${teamId}`;
-  const session = sessionStore.get(sessionKey);
-  return session?.access_token || null;
+async function getUserToken(userId: string, teamId: string): Promise<string | null> {
+  return await authService.getAuth(userId, teamId);
 }
 
 // Store user session
-function storeUserSession(userId: string, teamId: string, accessToken: string): void {
-  const sessionKey = `${userId}:${teamId}`;
-  sessionStore.set(sessionKey, {
-    access_token: accessToken,
-    created_at: Date.now()
-  });
+async function storeUserSession(userId: string, teamId: string, accessToken: string): Promise<void> {
+  await authService.storeAuth(userId, teamId, accessToken);
 }
 
 // OAuth start
@@ -293,7 +288,7 @@ app.get('/auth/slack/callback', async (req, res) => {
 
     // Store user session
     if (tokenData.authed_user?.access_token) {
-      storeUserSession(stateData.user_id, stateData.team_id, tokenData.authed_user.access_token);
+      await storeUserSession(stateData.user_id, stateData.team_id, tokenData.authed_user.access_token);
     }
 
     res.send(`
@@ -317,7 +312,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     service: 'Writerly AI Slack Bot',
-    version: '3.0.0 - Dual Token OAuth',
+    version: '3.0.0 - Dual Token OAuth + Firestore Auth',
     oauth: {
       enabled: !!(SLACK_CLIENT_ID && SLACK_CLIENT_SECRET),
       bot_token_available: !!SLACK_BOT_TOKEN,
@@ -327,10 +322,40 @@ app.get('/health', (req, res) => {
       authentication_first: true,
       bot_auth_prompts: !!SLACK_BOT_TOKEN,
       user_ai_responses: true,
-      in_memory_sessions: true
+      firestore_auth: true,
+      persistent_sessions: true
     },
     timestamp: new Date().toISOString()
   });
+});
+
+// Firestore Auth Health check
+app.get('/health/auth', async (req, res) => {
+  try {
+    // Firestore 연결 테스트
+    const testDoc = await authService.firestoreDB
+      .collection('health')
+      .doc('check')
+      .get();
+    
+    const cacheStats = authService.getCacheStats();
+    
+    res.json({
+      status: 'healthy',
+      firestore: 'connected',
+      cache: cacheStats,
+      encryption: 'enabled',
+      auth_service: 'operational',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(503).json({
+      status: 'unhealthy',
+      firestore: 'connection_failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // TRD Phase 1 - 고급 서식 보존 파싱
@@ -373,7 +398,7 @@ app.post('/slack/commands', async (req, res) => {
     console.log('Slack command received:', { user_id, team_id, text: text?.substring(0, 50) + '...' });
 
     // 1. Authentication check FIRST (highest priority)
-    const isAuthenticated = isUserAuthenticated(user_id, team_id);
+    const isAuthenticated = await isUserAuthenticated(user_id, team_id);
 
     if (!isAuthenticated) {
       // Show ephemeral auth message with button (private to user)
@@ -405,8 +430,20 @@ app.post('/slack/commands', async (req, res) => {
 • \`/ai "요약" "긴 텍스트..."\`
 • \`/ai "문법 검토" "영어 문장..."\`
 
+💡 기타 명령어:
+• \`/ai logout\` 또는 \`/ai 로그아웃\` - 인증 해제
+
 ⚠️ 입력은 최대 10,000자까지 가능합니다.
 ✨ AI 응답이 사용자 이름으로 표시됩니다.`
+      });
+    }
+
+    // 로그아웃 명령어 처리
+    if (text.trim().toLowerCase() === 'logout' || text.trim() === '로그아웃') {
+      await authService.deleteAuth(user_id, team_id);
+      return res.json({
+        response_type: 'ephemeral',
+        text: '✅ 로그아웃되었습니다. 다시 사용하려면 재인증이 필요합니다.'
       });
     }
 
@@ -462,7 +499,7 @@ app.post('/slack/commands', async (req, res) => {
 // TRD Phase 1.4 - AI processing with format preservation
 async function processAIRequestWithFormatPreservation(parsedCommand: ParsedCommand, userId: string, channelId: string, teamId: string): Promise<void> {
   try {
-    const userToken = getUserToken(userId, teamId);
+    const userToken = await getUserToken(userId, teamId);
     if (!userToken) {
       console.error('User token not found:', { userId, teamId });
       await sendBotMessage(channelId, '❌ OAuth 토큰을 찾을 수 없습니다. 다시 인증해주세요.');
@@ -555,7 +592,7 @@ async function processAIRequestWithFormatPreservationAndTracking(parsedCommand: 
       });
     }
 
-    const userToken = getUserToken(userId, teamId);
+    const userToken = await getUserToken(userId, teamId);
     if (!userToken) {
       console.error('User token not found:', { userId, teamId });
       await sendBotMessage(channelId, '❌ OAuth 토큰을 찾을 수 없습니다. 다시 인증해주세요.');
@@ -635,7 +672,7 @@ async function processAIRequestWithFormatPreservationAndTracking(parsedCommand: 
 // AI processing with user token
 async function processAIRequestWithUserToken(prompt: string, data: string, userId: string, channelId: string, teamId: string): Promise<void> {
   try {
-    const userToken = getUserToken(userId, teamId);
+    const userToken = await getUserToken(userId, teamId);
     if (!userToken) {
       console.error('User token not found:', { userId, teamId });
       await sendBotMessage(channelId, '❌ OAuth 토큰을 찾을 수 없습니다. 다시 인증해주세요.');
@@ -725,7 +762,7 @@ async function processAIRequestWithUserTokenAndTracking(prompt: string, data: st
       });
     }
 
-    const userToken = getUserToken(userId, teamId);
+    const userToken = await getUserToken(userId, teamId);
     if (!userToken) {
       console.error('User token not found:', { userId, teamId });
       await sendBotMessage(channelId, '❌ OAuth 토큰을 찾을 수 없습니다. 다시 인증해주세요.');
