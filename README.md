@@ -1,192 +1,201 @@
-# Writerly - Slack AI Assistant Bot
+# Writerly 2 - Slack AI Assistant
 
-10명 팀을 위한 단순하고 실용적인 Slack AI 어시스턴트 봇
+Slack 기반 AI 글쓰기 어시스턴트 - Google Vertex AI Gemini 2.0 Flash 활용
 
-## 🚀 프로젝트 개요
+## ✨ 핵심 기능
 
-Writerly는 Slack에서 AI의 도움을 받아 다양한 업무를 효율적으로 처리할 수 있도록 돕는 봇입니다. Google Cloud의 Gemini 2.5 Flash 모델을 활용하여 번역, 요약, 문서 작성 등 다양한 작업을 지원합니다.
-
-### 핵심 특징
-- 🎯 **단순한 명령어**: `/ai "작업" "내용"` 형식의 직관적인 인터페이스
-- ⚡ **빠른 응답**: 30초 이내 AI 응답 제공
-- 🔒 **안전한 인증**: OAuth 2.0 기반 Slack 인증
-- 📊 **스마트한 처리**: 비동기 처리로 안정적인 서비스
-- 🌐 **한국어 지원**: 완벽한 한국어 에러 메시지 및 도움말
-
-## 📋 주요 기능
-
-### 1. AI 명령어 처리
+### 🎯 Slash Command
 ```bash
 /ai "영어로 번역" "안녕하세요, 만나서 반갑습니다."
-/ai "3줄 요약" "긴 문서 내용..."
-/ai "코드 리뷰" "function example() { ... }"
+/ai "요약" "긴 문서 내용..."
+/ai "문법 검토" "영어 문장..."
 ```
 
-### 2. 도움말 시스템
+### 🧵 Thread Mention
 ```bash
-/ai
+@Writerly "일본어로 번역" "Hello world"
+@Writerly "코드 리뷰" "function example() { ... }"
 ```
-명령어만 입력하면 사용법과 예시를 볼 수 있습니다.
 
-### 3. 스마트한 에러 처리
-- 10,000자 입력 제한
-- 사용자 친화적인 한국어 에러 메시지
-- 자동 재시도 메커니즘
+### 📝 Format Preservation
+- **Slack 마크다운 구조 보존**
+- **복잡한 서식 자동 감지**
+- **적응형 서식 처리**
+
+### 🔐 Semi-Permanent Authentication
+- **Firestore 기반 암호화 토큰 저장**
+- **자동 토큰 만료 처리**
+- **OAuth 2.0 인증 플로우**
 
 ## 🛠️ 기술 스택
 
-- **Runtime**: Node.js 18 + TypeScript
-- **Framework**: Express.js
-- **Cloud**: Google Cloud Platform (Cloud Run)
-- **AI**: Vertex AI (Gemini 2.5 Flash)
-- **Storage**: Redis (Memorystore)
-- **Queue**: Cloud Tasks
-- **Auth**: Slack OAuth 2.0
+### Core
+- **Node.js 18** + **TypeScript**
+- **Express.js** (단일 서비스)
+- **Google Cloud Run** (서버리스 배포)
 
-## 🏗️ 프로젝트 구조
+### AI & Cloud
+- **Vertex AI** - Gemini 2.0 Flash
+- **Firestore** - 인증 데이터 저장
+- **Cloud Logging** - 로그 관리
+
+### Slack Integration
+- **Slack OAuth 2.0** - 사용자 인증
+- **Slack Events API** - Thread 지원
+- **Bot + User Token** - 이중 토큰 아키텍처
+
+## 🏗️ 현재 프로젝트 구조
 
 ```
-writerly/
-├── src/                    # 소스 코드
-│   ├── controllers/        # HTTP 요청 처리
-│   ├── services/           # 비즈니스 로직
-│   ├── middleware/         # Express 미들웨어
-│   ├── utils/              # 유틸리티 함수
-│   └── types/              # TypeScript 타입 정의
-├── tests/                  # 테스트 코드
-│   ├── unit/               # 단위 테스트
-│   ├── integration/        # 통합 테스트
-│   └── e2e/                # E2E 테스트
-├── deploy/                 # 배포 관련 파일
-│   ├── Dockerfile.prod     # 프로덕션 Docker 이미지
-│   ├── cloudbuild.yaml     # CI/CD 파이프라인
-│   └── *.sh                # 배포 스크립트
-├── scripts/                # 유틸리티 스크립트
-└── DOCS/                   # 프로젝트 문서
+writerly-2/
+├── src/
+│   ├── simple-oauth-minimal.ts      # 🎯 메인 애플리케이션
+│   ├── formatters/
+│   │   └── FormatDetector.ts         # 서식 감지기
+│   ├── parsers/
+│   │   ├── AdvancedSlackParser.ts    # 고급 파싱
+│   │   └── mention.parser.ts         # 멘션 파싱
+│   ├── prompts/
+│   │   └── FormatAwarePrompts.ts     # AI 프롬프트 생성
+│   ├── services/
+│   │   ├── firestore-auth.service.ts # 인증 서비스
+│   │   └── message-updater.service.ts # 메시지 업데이트
+│   └── handlers/
+│       └── slack-events.handler.ts   # Events API 핸들러
+├── DOCS/                             # 핵심 문서
+│   ├── PRD.md                        # 제품 요구사항
+│   ├── TRD.md                        # 기술 요구사항
+│   ├── ADR.md                        # 아키텍처 결정
+│   ├── FORMAT_PRESERVATION_TRD.md    # 서식 보존 시스템
+│   ├── FIRESTORE_AUTH_TRD.md        # 인증 시스템
+│   └── THREAD_SUPPORT_TRD.md        # 스레드 지원
+├── package.json
+├── tsconfig.json
+├── Dockerfile
+└── CLAUDE.md                         # AI 어시스턴트 가이드
 ```
 
-## 🚀 빠른 시작
+## 🚀 배포 및 실행
 
-### 사전 요구사항
-- Node.js 18 이상
-- Google Cloud 계정
-- Slack 워크스페이스 관리자 권한
-
-### 설치 및 실행
-
-1. **저장소 클론**
+### Cloud Run 배포
 ```bash
-git clone https://github.com/your-org/writerly.git
-cd writerly
+# TypeScript 빌드
+npm run build
+
+# Cloud Run에 배포
+gcloud run deploy writerly \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars="GCP_PROJECT_ID=your-project-id"
 ```
 
-2. **의존성 설치**
+### 로컬 개발
 ```bash
-npm ci
-```
+# 의존성 설치
+npm install
 
-3. **환경 설정**
-```bash
-cp .env.example .env
-# .env 파일 편집하여 필요한 값 설정
-```
-
-4. **개발 서버 실행**
-```bash
+# 개발 서버 실행
 npm run dev
+
+# 빌드 테스트
+npm run build
 ```
 
-### 프로덕션 배포
+### Slack 앱 설정
+1. https://api.slack.com/apps에서 새 앱 생성
+2. OAuth & Permissions에서 스코프 설정:
+   - `chat:write` (Bot Token)
+   - `users:read`, `chat:write` (User Token)
+3. Slash Commands: `/ai` → `your-service-url/slack/command`
+4. Event Subscriptions: `your-service-url/slack/events`
+5. 환경변수 설정:
+   ```bash
+   SLACK_CLIENT_ID=your_client_id
+   SLACK_CLIENT_SECRET=your_client_secret
+   SLACK_SIGNING_SECRET=your_signing_secret
+   SLACK_BOT_TOKEN=your_bot_token
+   ```
 
-1. **GCP 프로젝트 설정**
+## 💡 사용법
+
+### 1. 첫 인증
 ```bash
-gcloud config set project YOUR_PROJECT_ID
+/ai "테스트" "안녕하세요"
 ```
+→ 인증 버튼 클릭하여 OAuth 완료
 
-2. **인프라 및 시크릿 설정**
+### 2. 기본 명령어
 ```bash
-./deploy/setup-secrets.sh
-./deploy/setup-monitoring.sh -p YOUR_PROJECT_ID -e your-email@company.com
+# 번역
+/ai "영어로 번역" "안녕하세요"
+/ai "일본어로 번역" "Hello world"
+
+# 요약 및 분석
+/ai "요약" "긴 텍스트..."
+/ai "문법 검토" "영어 문장..."
+
+# 로그아웃
+/ai logout
 ```
 
-3. **애플리케이션 배포**
+### 3. Thread에서 멘션
 ```bash
-./deploy/deploy.sh -p YOUR_PROJECT_ID
+@Writerly "중국어로 번역" "Good morning"
 ```
 
-## 📊 모니터링 및 운영
+## 🔧 주요 특징
 
-### 헬스체크
-- `/health` - 상세 시스템 헬스체크
-- `/health/quick` - 빠른 헬스체크
-- `/metrics` - Prometheus 형식 메트릭
+### Format Preservation System (TRD Phase 1)
+- **고급 파싱**: 복잡한 Slack 마크다운 구조 분석
+- **서식 감지**: 링크, 이모지, 리스트 등 자동 감지
+- **적응형 처리**: 복잡도에 따른 차별화된 AI 프롬프트
 
-### 모니터링 대시보드
-- Cloud Run 메트릭
-- Redis 상태
-- AI 요청 통계
-- 비즈니스 메트릭
+### Semi-Permanent Authentication
+- **Firestore 저장**: AES-256 암호화된 토큰 저장
+- **자동 연장**: 사용 시마다 TTL 자동 갱신  
+- **만료 처리**: 토큰 만료 시 자동 재인증 안내
 
-### 알람 정책
-- 높은 에러율 (>5%)
-- 응답 시간 지연 (>5초)
-- 메모리 사용률 (>85%)
-- 서비스 다운
+### Thread Support
+- **Events API**: `app_mention` 이벤트 처리
+- **Message Update**: 실시간 메시지 수정으로 응답
+- **Enterprise-grade**: 재시도 로직, Rate Limiting 포함
 
-## 🧪 테스트
+## 📊 헬스체크
 
 ```bash
-# 모든 테스트 실행
-npm test
+# 기본 헬스체크
+curl https://your-service-url/health
 
-# 단위 테스트
-npm run test:unit
-
-# 통합 테스트
-npm run test:integration
-
-# E2E 테스트
-npm run test:e2e
-
-# 테스트 커버리지
-npm run test:coverage
+# 인증 시스템 헬스체크  
+curl https://your-service-url/health/auth
 ```
 
-## 📚 문서
+## 📚 참고 문서
 
-- [제품 요구사항 문서 (PRD)](DOCS/PRD.md)
-- [기술 요구사항 문서 (TRD)](DOCS/TRD.md)
-- [아키텍처 결정 기록 (ADR)](DOCS/ADR.md)
-- [CI/CD 파이프라인 가이드](DOCS/CI_CD_PIPELINE_GUIDE.md)
-- [운영 가이드](DOCS/OPERATIONS_GUIDE.md)
-- [사용자 가이드](DOCS/USER_GUIDE.md)
+- **[FORMAT_PRESERVATION_TRD.md](DOCS/FORMAT_PRESERVATION_TRD.md)** - 서식 보존 시스템 구현
+- **[FIRESTORE_AUTH_TRD.md](DOCS/FIRESTORE_AUTH_TRD.md)** - 인증 시스템 구현  
+- **[THREAD_SUPPORT_TRD.md](DOCS/THREAD_SUPPORT_TRD.md)** - 스레드 지원 구현
+- **[CLAUDE.md](CLAUDE.md)** - AI 어시스턴트 개발 가이드
 
-## 🤝 기여하기
+## 🎯 프로젝트 철학
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+**"Simplicity, Practicality, Immediate Value for 10-person teams"**
 
-## 📄 라이선스
+- ✅ **단일 서비스 아키텍처** (복잡성 최소화)
+- ✅ **비용 효율적 설계** (10,000자 제한, 예산 알림)
+- ✅ **즉시 사용 가능** (복잡한 설정 없이 바로 활용)
+- ✅ **한국어 최적화** (완전한 한국어 지원)
+- ✅ **TDD 기반 개발** (Red-Green-Refactor)
 
-이 프로젝트는 MIT 라이선스 하에 있습니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
+## 🏆 현재 상태
 
-## 🏆 프로젝트 성과
-
-- ✅ **6주 개발 일정 100% 준수**
-- ✅ **업계 모범 사례 수준의 문서화**
-- ✅ **80% 이상 테스트 커버리지**
-- ✅ **DevSecOps 파이프라인 구축**
-- ✅ **1인 운영 가능한 시스템 구조**
-
-## 📞 지원
-
-- **Slack 채널**: #writerly-support
-- **이메일**: writerly-support@company.com
-- **이슈 트래커**: [GitHub Issues](https://github.com/your-org/writerly/issues)
+- **✅ Thread Support** - 멘션 기반 AI 처리
+- **✅ Format Preservation** - Slack 서식 보존 시스템
+- **✅ Firestore Auth** - 반영구 인증 시스템  
+- **✅ Multi-language** - 다국어 번역 지원
+- **✅ Production Ready** - Cloud Run 배포 완료
 
 ---
 
-**🎉 Writerly와 함께 더 스마트하게 일하세요!**
+**🤖 Built with Claude Code - Smart AI Assistant for Modern Development**
