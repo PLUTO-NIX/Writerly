@@ -25,10 +25,17 @@ app.use('/slack/events', (req, res, next) => {
         // Convert raw buffer to string and parse JSON for downstream handlers
         const bodyString = req.body.toString('utf8');
         (req as any).rawBody = bodyString;
-        req.body = JSON.parse(bodyString);
+        
+        // Only parse JSON if bodyString is not empty and starts with '{' or '['
+        if (bodyString && (bodyString.trim().startsWith('{') || bodyString.trim().startsWith('['))) {
+          req.body = JSON.parse(bodyString);
+        } else {
+          // For non-JSON content, keep as string
+          req.body = bodyString;
+        }
         next();
       } catch (parseError) {
-        console.error('JSON parsing error:', parseError);
+        console.error('JSON parsing error:', parseError, 'Body:', req.body.toString('utf8').substring(0, 100));
         next(parseError);
       }
     });
@@ -57,10 +64,10 @@ const formatAwarePrompts = new FormatAwarePrompts();
 const slackEventsHandler = new SlackEventsHandler();
 
 // OAuth configuration
-const SLACK_CLIENT_ID = process.env.SLACK_CLIENT_ID || '';
+const SLACK_CLIENT_ID = process.env.SLACK_CLIENT_ID || '5236535832325.9220502327843';
 const SLACK_CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET || '';
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || '';
-const BASE_URL = process.env.BASE_URL || 'https://writerly-ai-ryvo6rqgea-du.a.run.app';
+const BASE_URL = process.env.BASE_URL || 'https://writerly-ryvo6rqgea-uc.a.run.app';
 
 // Simple in-memory session storage (for minimal implementation) - DEPRECATED: Replaced with Firestore
 // const sessionStore = new Map<string, any>(); // Firestore 로 대체됨
@@ -125,6 +132,12 @@ async function sendEphemeralProcessingMessage(channel: string, userId: string, t
     const data = await response.json() as any;
     if (!data.ok) {
       console.error('Ephemeral message failed:', data.error, data);
+      
+      // Handle bot token issues
+      if (data.error === 'invalid_auth' || data.error === 'token_revoked') {
+        console.error('🚨 BOT TOKEN IS INVALID OR EXPIRED! Check SLACK_BOT_TOKEN environment variable');
+      }
+      
       return null;
     } else {
       console.log('Ephemeral processing message sent successfully');
@@ -168,7 +181,7 @@ async function deleteMessage(channel: string, messageTs: string): Promise<void> 
 }
 
 // User client for sending AI responses
-async function sendUserMessage(channel: string, text: string, userToken: string): Promise<void> {
+async function sendUserMessage(channel: string, text: string, userToken: string, userId: string = '', teamId: string = ''): Promise<boolean> {
   try {
     const response = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
@@ -186,11 +199,31 @@ async function sendUserMessage(channel: string, text: string, userToken: string)
     const data = await response.json() as any;
     if (!data.ok) {
       console.error('User message failed:', data.error);
+      
+      // Handle invalid_auth error - token expired or revoked
+      if (data.error === 'invalid_auth' || data.error === 'token_revoked') {
+        console.log('🔑 User token expired, removing from auth storage:', { userId, teamId, channel });
+        
+        // Remove invalid token from storage
+        if (userId && teamId) {
+          await authService.deleteAuth(userId, teamId);
+          console.log('🗑️ Invalid token removed from storage');
+          
+          // Send bot message asking for reauth
+          const authUrl = `${BASE_URL}/auth/slack?user_id=${encodeURIComponent(userId)}&team_id=${encodeURIComponent(teamId)}`;
+          await sendBotMessage(channel, `❌ 인증 토큰이 만료되었습니다.\n\n🔗 다시 인증하기: ${authUrl}`);
+        } else {
+          await sendBotMessage(channel, '❌ 인증 토큰이 만료되었습니다. /ai 명령어를 다시 사용하여 재인증해주세요.');
+        }
+      }
+      return false;
     } else {
       console.log('User message sent successfully');
+      return true;
     }
   } catch (error) {
     console.error('User message error:', error);
+    return false;
   }
 }
 
@@ -440,7 +473,7 @@ function parseSlashCommandAdvanced(text: string): ParsedCommand | null {
 }
 
 // Slack command endpoint with authentication-first flow
-app.post('/slack/commands', async (req, res) => {
+app.post('/slack/command', async (req, res) => {
   try {
     const { text, user_id, channel_id, team_id, user_name } = req.body;
 
@@ -602,8 +635,12 @@ async function processAIRequestWithFormatPreservation(parsedCommand: ParsedComma
     });
 
     // Send response as user
-    await sendUserMessage(channelId, content, userToken);
-    console.log('📤 Format-preserved AI response sent as user:', { userId, channelId });
+    const success = await sendUserMessage(channelId, content, userToken, userId, teamId);
+    if (success) {
+      console.log('📤 Format-preserved AI response sent as user:', { userId, channelId });
+    } else {
+      console.log('❌ Failed to send AI response - user token invalid');
+    }
 
   } catch (error) {
     console.error('❌ Format preservation AI processing failed:', { error, userId, channelId });
@@ -695,8 +732,12 @@ async function processAIRequestWithFormatPreservationAndTracking(parsedCommand: 
     });
 
     // Send response as user
-    await sendUserMessage(channelId, content, userToken);
-    console.log('📤 Format-preserved AI response sent as user:', { userId, channelId });
+    const success = await sendUserMessage(channelId, content, userToken, userId, teamId);
+    if (success) {
+      console.log('📤 Format-preserved AI response sent as user:', { userId, channelId });
+    } else {
+      console.log('❌ Failed to send AI response - user token invalid');
+    }
 
     // Delete the processing message
     if (processingMessageTs) {
@@ -776,13 +817,23 @@ async function processAIRequestWithUserToken(prompt: string, data: string, userI
     console.log('AI processing completed:', { userId, processingTime, responseLength: content.length });
 
     // Send response as user
-    await sendUserMessage(channelId, content, userToken);
-    console.log('AI response sent as user:', { userId, channelId });
+    const success = await sendUserMessage(channelId, content, userToken, userId, teamId);
+    if (success) {
+      console.log('AI response sent as user:', { userId, channelId });
+    } else {
+      console.log('❌ Failed to send AI response - user token invalid');
+    }
 
   } catch (error) {
     console.error('AI processing failed:', { error, userId, channelId });
     await sendBotMessage(channelId, '❌ AI 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
   }
+}
+
+// Helper function to extract userId from channel (temporary solution)
+function extractUserIdFromChannel(channel: string): string | null {
+  // This is a temporary workaround - we should pass userId through the call chain
+  return null;
 }
 
 // Enhanced AI processing with user token and message tracking
@@ -866,8 +917,12 @@ async function processAIRequestWithUserTokenAndTracking(prompt: string, data: st
     console.log('AI processing completed:', { userId, processingTime, responseLength: content.length });
 
     // Send response as user
-    await sendUserMessage(channelId, content, userToken);
-    console.log('AI response sent as user:', { userId, channelId });
+    const success = await sendUserMessage(channelId, content, userToken, userId, teamId);
+    if (success) {
+      console.log('AI response sent as user:', { userId, channelId });
+    } else {
+      console.log('❌ Failed to send AI response - user token invalid');
+    }
 
     // Delete the processing message
     if (processingMessageTs) {
@@ -899,7 +954,7 @@ app.get('/', (req, res) => {
     },
     endpoints: {
       health: '/health',
-      slack: '/slack/commands',
+      slack: '/slack/command',
       auth: '/auth/slack',
       callback: '/auth/slack/callback'
     }

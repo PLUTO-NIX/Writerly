@@ -1,13 +1,13 @@
 {
   "name": "slack-ai-bot",
   "version": "1.0.0",
-  "main": "dist/simple-app.js",
+  "main": "dist/simple-oauth-minimal.js",
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
-    "start": "node dist/app.js",
-    "dev": "nodemon src/app.ts",
+    "start": "node dist/simple-oauth-minimal.js",
+    "dev": "nodemon src/simple-oauth-minimal.ts",
     "build": "tsc",
     "clean": "rm -rf dist",
     "test": "jest",
