@@ -31,7 +31,7 @@ export class AISlackController {
       // 즉시 응답 (Fire-and-Forget 패턴)
       res.json({
         response_type: 'ephemeral',
-        text: '🤖 AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!'
+        text: 'AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!'
       });
 
       // 비동기로 AI 처리 시작

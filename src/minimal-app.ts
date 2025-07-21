@@ -105,7 +105,7 @@ app.post('/slack/commands', async (req, res) => {
     // Immediate response
     res.json({
       response_type: 'ephemeral',
-      text: '🤖 AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!\n\n📝 현재 기본 모드로 동작 중입니다. OAuth 인증 후 더 많은 기능을 사용할 수 있습니다.'
+      text: 'AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!\n\n현재 기본 모드로 동작 중입니다. OAuth 인증 후 더 많은 기능을 사용할 수 있습니다.'
     });
 
     // Process AI request asynchronously

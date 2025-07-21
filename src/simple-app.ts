@@ -123,7 +123,7 @@ app.post('/slack/commands', authMiddleware.requireSlackAuth, async (req, res) =>
     // Immediate response (Fire-and-Forget pattern from ADR-003)
     res.json({
       response_type: 'ephemeral',
-      text: '🤖 AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!'
+      text: 'AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!'
     });
 
     // Process AI request asynchronously

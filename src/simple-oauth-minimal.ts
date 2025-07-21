@@ -9,9 +9,36 @@ import { FormatAwarePrompts, PromptConfig } from './prompts/FormatAwarePrompts';
 // Firestore 기반 인증 서비스
 import { authService } from './services/firestore-auth.service';
 
+// Thread Support - Slack Events API 핸들러
+import { SlackEventsHandler } from './handlers/slack-events.handler';
+
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// Raw body capture middleware for Slack signature verification (POST only)
+app.use('/slack/events', (req, res, next) => {
+  if (req.method === 'POST') {
+    // Apply raw body parser only for POST requests
+    express.raw({ type: 'application/json' })(req, res, (err) => {
+      if (err) return next(err);
+      try {
+        // Convert raw buffer to string and parse JSON for downstream handlers
+        const bodyString = req.body.toString('utf8');
+        (req as any).rawBody = bodyString;
+        req.body = JSON.parse(bodyString);
+        next();
+      } catch (parseError) {
+        console.error('JSON parsing error:', parseError);
+        next(parseError);
+      }
+    });
+  } else {
+    // For GET requests, just continue without raw body parsing
+    next();
+  }
+});
+
+// Standard JSON parsing for other endpoints
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -26,11 +53,14 @@ const advancedParser = new AdvancedSlackParser();
 const formatDetector = new FormatDetector();
 const formatAwarePrompts = new FormatAwarePrompts();
 
+// Thread Support - Events API 핸들러 인스턴스
+const slackEventsHandler = new SlackEventsHandler();
+
 // OAuth configuration
 const SLACK_CLIENT_ID = process.env.SLACK_CLIENT_ID || '';
 const SLACK_CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET || '';
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || '';
-const BASE_URL = process.env.BASE_URL || 'https://writerly-177365346300.us-central1.run.app';
+const BASE_URL = process.env.BASE_URL || 'https://writerly-ai-ryvo6rqgea-du.a.run.app';
 
 // Simple in-memory session storage (for minimal implementation) - DEPRECATED: Replaced with Firestore
 // const sessionStore = new Map<string, any>(); // Firestore 로 대체됨
@@ -60,7 +90,7 @@ async function sendBotMessage(channel: string, text: string, authUrl?: string): 
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as any;
     if (!data.ok) {
       console.error('Bot message failed:', data.error, data);
     } else {
@@ -92,13 +122,13 @@ async function sendEphemeralProcessingMessage(channel: string, userId: string, t
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as any;
     if (!data.ok) {
       console.error('Ephemeral message failed:', data.error, data);
       return null;
     } else {
       console.log('Ephemeral processing message sent successfully');
-      return data.message_ts || data.ts;
+      return (data as any).message_ts || (data as any).ts;
     }
   } catch (error) {
     console.error('Ephemeral message error:', error);
@@ -126,7 +156,7 @@ async function deleteMessage(channel: string, messageTs: string): Promise<void> 
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as any;
     if (!data.ok) {
       console.error('Message deletion failed:', data.error, data);
     } else {
@@ -153,7 +183,7 @@ async function sendUserMessage(channel: string, text: string, userToken: string)
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as any;
     if (!data.ok) {
       console.error('User message failed:', data.error);
     } else {
@@ -323,7 +353,9 @@ app.get('/health', (req, res) => {
       bot_auth_prompts: !!SLACK_BOT_TOKEN,
       user_ai_responses: true,
       firestore_auth: true,
-      persistent_sessions: true
+      persistent_sessions: true,
+      thread_support: !!(process.env.SLACK_SIGNING_SECRET && process.env.SLACK_BOT_USER_ID),
+      events_api: !!process.env.SLACK_SIGNING_SECRET
     },
     timestamp: new Date().toISOString()
   });
@@ -356,6 +388,23 @@ app.get('/health/auth', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   }
+});
+
+// Thread Support - Slack Events API 엔드포인트
+app.post('/slack/events', async (req, res) => {
+  await slackEventsHandler.handle(req, res);
+});
+
+// Events API GET 요청에 대한 응답 (Slack 앱 설정 페이지에서 접근할 때)
+app.get('/slack/events', (req, res) => {
+  res.json({
+    status: 'Slack Events API Ready',
+    endpoint: '/slack/events',
+    methods: ['POST'],
+    description: 'This endpoint receives Slack Events API webhooks',
+    setup_url: 'https://api.slack.com/apps',
+    thread_support: true
+  });
 });
 
 // TRD Phase 1 - 고급 서식 보존 파싱
@@ -405,7 +454,7 @@ app.post('/slack/commands', async (req, res) => {
       const authUrl = `${BASE_URL}/auth/slack?user_id=${encodeURIComponent(user_id)}&team_id=${encodeURIComponent(team_id)}`;
       return res.json({
         response_type: 'ephemeral',
-        text: '🔐 AI를 사용하려면 먼저 인증이 필요합니다.',
+        text: 'AI를 사용하려면 먼저 인증이 필요합니다.',
         attachments: [{
           actions: [{
             type: 'button',
@@ -421,20 +470,18 @@ app.post('/slack/commands', async (req, res) => {
     if (!text || text.trim().length === 0) {
       return res.json({
         response_type: 'ephemeral',
-        text: `📋 **Writerly AI 사용법** ✅ 인증됨
-
-사용법: \`/ai "작업" "내용"\`
+        text: `사용법: \`/ai "작업" "내용"\`
 
 예시:
 • \`/ai "영어로 번역" "안녕하세요"\`
 • \`/ai "요약" "긴 텍스트..."\`
 • \`/ai "문법 검토" "영어 문장..."\`
 
-💡 기타 명령어:
+기타 명령어:
 • \`/ai logout\` 또는 \`/ai 로그아웃\` - 인증 해제
 
-⚠️ 입력은 최대 10,000자까지 가능합니다.
-✨ AI 응답이 사용자 이름으로 표시됩니다.`
+입력은 최대 10,000자까지 가능합니다.
+AI 응답이 사용자 이름으로 표시됩니다.`
       });
     }
 
@@ -443,7 +490,7 @@ app.post('/slack/commands', async (req, res) => {
       await authService.deleteAuth(user_id, team_id);
       return res.json({
         response_type: 'ephemeral',
-        text: '✅ 로그아웃되었습니다. 다시 사용하려면 재인증이 필요합니다.'
+        text: '로그아웃되었습니다. 다시 사용하려면 재인증이 필요합니다.'
       });
     }
 
@@ -457,7 +504,7 @@ app.post('/slack/commands', async (req, res) => {
       if (!prompt || !data) {
         return res.json({
           response_type: 'ephemeral',
-          text: '❌ 올바른 형식이 아닙니다.\n\n사용법: `/ai "작업" "내용"`\n예시: `/ai "영어로 번역" "안녕하세요"`'
+          text: '올바른 형식이 아닙니다.\n\n사용법: `/ai "작업" "내용"`\n예시: `/ai "영어로 번역" "안녕하세요"`'
         });
       }
       
@@ -466,7 +513,7 @@ app.post('/slack/commands', async (req, res) => {
       if (totalLength > 10000) {
         return res.json({
           response_type: 'ephemeral',
-          text: `⚠️ 입력 데이터가 너무 깁니다.\n• 최대 허용 길이: 10,000자\n• 현재 길이: ${totalLength.toLocaleString()}자`
+          text: `입력 데이터가 너무 깁니다.\n• 최대 허용 길이: 10,000자\n• 현재 길이: ${totalLength.toLocaleString()}자`
         });
       }
 
@@ -480,7 +527,7 @@ app.post('/slack/commands', async (req, res) => {
     if (totalLength > 10000) {
       return res.json({
         response_type: 'ephemeral',
-        text: `⚠️ 입력 데이터가 너무 깁니다.\n• 최대 허용 길이: 10,000자\n• 현재 길이: ${totalLength.toLocaleString()}자`
+        text: `입력 데이터가 너무 깁니다.\n• 최대 허용 길이: 10,000자\n• 현재 길이: ${totalLength.toLocaleString()}자`
       });
     }
 
@@ -491,7 +538,7 @@ app.post('/slack/commands', async (req, res) => {
     console.error('Slack command error:', error);
     res.json({
       response_type: 'ephemeral',
-      text: '⚠️ 요청 처리 중 오류가 발생했습니다. 다시 시도해주세요.'
+      text: '요청 처리 중 오류가 발생했습니다. 다시 시도해주세요.'
     });
   }
 });
@@ -577,7 +624,7 @@ async function processAIRequestWithFormatPreservationAndTracking(parsedCommand: 
     processingMessageTs = await sendEphemeralProcessingMessage(
       channelId, 
       userId, 
-      `🤖 AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!\n\n✨ 완료되면 사용자 이름으로 응답이 표시됩니다.${complexityMessage}`
+      `AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!\n\n완료되면 사용자 이름으로 응답이 표시됩니다.${complexityMessage}`
     );
 
     // Bot 메시지 성공 여부에 따른 slash command 응답
@@ -588,7 +635,7 @@ async function processAIRequestWithFormatPreservationAndTracking(parsedCommand: 
       // Bot 메시지 실패 시 fallback 응답
       res.json({
         response_type: 'ephemeral',
-        text: `🤖 AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!${complexityMessage}`
+        text: `AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!${complexityMessage}`
       });
     }
 
@@ -747,7 +794,7 @@ async function processAIRequestWithUserTokenAndTracking(prompt: string, data: st
     processingMessageTs = await sendEphemeralProcessingMessage(
       channelId, 
       userId, 
-      '🤖 AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!\n\n✨ 완료되면 사용자 이름으로 응답이 표시됩니다.'
+      'AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!\n\n완료되면 사용자 이름으로 응답이 표시됩니다.'
     );
 
     // Bot 메시지 성공 여부에 따른 slash command 응답
@@ -758,7 +805,7 @@ async function processAIRequestWithUserTokenAndTracking(prompt: string, data: st
       // Bot 메시지 실패 시 fallback 응답
       res.json({
         response_type: 'ephemeral',
-        text: '🤖 AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!'
+        text: 'AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!'
       });
     }
 

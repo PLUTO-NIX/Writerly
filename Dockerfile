@@ -9,15 +9,21 @@ COPY tsconfig.json ./
 # Install dependencies
 RUN npm install
 
-# Copy source files for simple-oauth-minimal and format preservation and firestore auth
+# Copy source files for simple-oauth-minimal and format preservation and firestore auth and thread support
 COPY src/simple-oauth-minimal.ts ./src/
 COPY src/parsers/ ./src/parsers/
 COPY src/formatters/ ./src/formatters/
 COPY src/prompts/ ./src/prompts/
 COPY src/services/ ./src/services/
+COPY src/handlers/ ./src/handlers/
 
 # Build the application
-RUN npx tsc src/simple-oauth-minimal.ts src/parsers/AdvancedSlackParser.ts src/formatters/FormatDetector.ts src/prompts/FormatAwarePrompts.ts src/services/firestore-auth.service.ts \
+RUN npx tsc src/simple-oauth-minimal.ts \
+    src/parsers/AdvancedSlackParser.ts src/parsers/mention.parser.ts \
+    src/formatters/FormatDetector.ts \
+    src/prompts/FormatAwarePrompts.ts \
+    src/services/firestore-auth.service.ts src/services/message-updater.service.ts \
+    src/handlers/slack-events.handler.ts \
     --outDir dist --target es2020 --module commonjs --esModuleInterop --skipLibCheck --resolveJsonModule
 
 # Production stage

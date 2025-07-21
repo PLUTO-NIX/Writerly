@@ -3,7 +3,16 @@
  * TRD-FORMAT-001 Phase 1.2 구현
  */
 
-import { FormatMetadata } from '../parsers/AdvancedSlackParser';
+export interface FormatMetadata {
+  hasLineBreaks: boolean;
+  hasBoldText: boolean;
+  hasItalicText: boolean;
+  hasCodeBlocks: boolean;
+  hasLists: boolean;
+  hasLinks: boolean;
+  hasEmoji?: boolean;
+  complexity: 'simple' | 'moderate' | 'complex';
+}
 
 export interface DetailedFormatInfo {
   lineBreaks: {
@@ -302,3 +311,6 @@ export class FormatDetector {
     return { p0, p1, p2 };
   }
 }
+
+// 싱글톤 인스턴스 export
+export const formatDetector = new FormatDetector();

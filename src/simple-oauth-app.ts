@@ -406,7 +406,7 @@ app.post('/slack/commands', async (req, res) => {
     // Immediate response
     res.json({
       response_type: 'ephemeral',
-      text: '🤖 AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!\n\n✨ 완료되면 사용자 이름으로 응답이 표시됩니다.'
+      text: 'AI가 요청을 처리하고 있습니다... 잠시만 기다려주세요!\n\n완료되면 사용자 이름으로 응답이 표시됩니다.'
     });
 
     // Log AI request start
