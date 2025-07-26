@@ -1,5 +1,5 @@
 {
-  "name": "slack-ai-bot",
+  "name": "writerly",
   "version": "1.0.0",
   "main": "dist/simple-oauth-minimal.js",
   "engines": {

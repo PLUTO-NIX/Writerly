@@ -1,4 +1,4 @@
-# Writerly 2 - Slack AI Assistant
+# Writerly - Slack AI Assistant
 
 Slack 기반 AI 글쓰기 어시스턴트 - Google Vertex AI Gemini 2.0 Flash 활용
 
@@ -47,7 +47,7 @@ Slack 기반 AI 글쓰기 어시스턴트 - Google Vertex AI Gemini 2.0 Flash �
 ## 🏗️ 현재 프로젝트 구조
 
 ```
-writerly-2/
+writerly/
 ├── src/
 │   ├── simple-oauth-minimal.ts      # 🎯 메인 애플리케이션
 │   ├── formatters/

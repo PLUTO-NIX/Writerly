@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Writerly 2** is a Slack-based AI writing assistant that helps users generate various types of content using Vertex AI (Gemini 2.5 Flash). The project philosophy emphasizes simplicity, practicality, and immediate value for 10-person teams.
+**Writerly** is a Slack-based AI writing assistant that helps users generate various types of content using Vertex AI (Gemini 2.5 Flash). The project philosophy emphasizes simplicity, practicality, and immediate value for 10-person teams.
 
 **Current Status**: Planning phase complete, ready for Week 1 infrastructure setup. All documentation has been recognized as "industry best practice" level.
+
+> **⚠️ Important Note**: Repository name changed from "Writerly 2" to "Writerly", but **GCP Project ID remains `writerly-01`** (unchanged). This maintains deployment compatibility while simplifying the repository naming.
 
 ## Tech Stack & Architecture
 

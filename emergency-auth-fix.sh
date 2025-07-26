@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Emergency Authentication Fix Script for Writerly 2
+# Emergency Authentication Fix Script for Writerly
 # This script applies immediate fixes to resolve authentication issues
 
-echo "🚑 Writerly 2 Emergency Authentication Fix"
+echo "🚑 Writerly Emergency Authentication Fix"
 echo "=========================================="
 
 # Check if .env file exists

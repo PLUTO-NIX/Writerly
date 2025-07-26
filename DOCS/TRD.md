@@ -1,16 +1,16 @@
-# Slack AI Assistant Bot - Technical Requirements Document (TRD)
+# Writerly - Technical Requirements Document (TRD)
 
 ## 1. 문서 개요 (Document Overview)
 
 ### 1.1 목적
-본 문서는 소규모 사내 팀을 위한 Slack AI Assistant Bot의 기술적 구현 세부사항을 정의하고, 단순하고 실용적인 아키텍처를 통해 빠른 개발과 안정적인 운영을 지원합니다.
+본 문서는 소규모 사내 팀을 위한 Writerly AI Assistant의 기술적 구현 세부사항을 정의하고, 단순하고 실용적인 아키텍처를 통해 빠른 개발과 안정적인 운영을 지원합니다.
 
 ### 1.2 범위
-- 단일 서비스 아키텍처 설계
-- Vertex AI 통합 가이드
-- 임시 데이터 저장 전략
-- 단순한 인증 및 세션 관리
-- 기본 배포 및 운영 가이드
+- 단일 Cloud Run 서비스 아키텍처
+- Vertex AI (Gemini 2.0 Flash) 통합
+- Firestore 기반 영구 인증 저장
+- 단순한 OAuth 2.0 세션 관리
+- Cloud Run 배포 및 운영 가이드
 
 ### 1.3 설계 원칙
 - **단순성 우선**: 복잡한 기능보다는 안정성과 사용성 중심
@@ -40,7 +40,7 @@
                                       │ HTTPS Webhook
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Google Cloud Platform                               │
+│                         Writerly Production System                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────────┐│
@@ -63,8 +63,8 @@
 │  ┌────────────────────────────────────┼────────────────────────────────────┐ │
 │  │                                    ▼                                    │ │
 │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐           │ │
-│  │  │ Redis          │  │ Cloud Tasks    │  │ Vertex AI      │           │ │
-│  │  │ (세션 전용)     │  │ (큐 시스템)     │  │ (Gemini 2.5)   │           │ │
+│  │  │ Firestore      │  │ Secret Manager │  │ Vertex AI      │           │ │
+│  │  │ (영구 인증)     │  │ (API 키 관리)   │  │ (Gemini 2.0)   │           │ │
 │  │  └────────────────┘  └────────────────┘  └────────────────┘           │ │
 │  │                                                                        │ │
 │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐           │ │
@@ -78,113 +78,79 @@
 ### 2.2 단일 서비스 구조
 
 ```typescript
-// 프로젝트 구조
-slack-ai-bot/
+// 현재 구현된 프로젝트 구조 (단순화)
+writerly/
+├── simple-oauth-minimal.js       # 메인 애플리케이션 (Express + OAuth + AI)
 ├── src/
-│   ├── app.ts                    # Express 앱 진입점
-│   ├── config/
-│   │   ├── index.ts              # 설정 통합
-│   │   ├── slack.ts              # Slack 설정
-│   │   ├── gcp.ts                # GCP 설정
-│   │   └── redis.ts              # Redis 설정
-│   ├── controllers/
-│   │   ├── slack.controller.ts   # 슬래시 커맨드 처리
-│   │   ├── auth.controller.ts    # OAuth 인증
-│   │   └── queue.controller.ts   # 큐 작업 처리
-│   ├── services/
-│   │   ├── vertexai.service.ts   # Vertex AI 통합
-│   │   ├── session.service.ts    # 세션 관리
-│   │   ├── queue.service.ts      # 큐 서비스
-│   │   └── monitoring.service.ts # 토큰 사용량 모니터링
-│   ├── middleware/
-│   │   ├── auth.middleware.ts    # 인증 미들웨어
-│   │   ├── validation.middleware.ts # 입력 검증
-│   │   ├── ratelimit.middleware.ts # 속도 제한
-│   │   └── logging.middleware.ts # 로깅
-│   ├── models/
-│   │   ├── session.model.ts      # 세션 모델
-│   │   └── types.ts              # 타입 정의
-│   └── utils/
-│       ├── logger.ts             # 로깅 유틸
-│       ├── crypto.ts             # 암호화 유틸
-│       └── slack.ts              # Slack 헬퍼
-├── tests/
-│   ├── unit/                     # 단위 테스트
-│   ├── integration/              # 통합 테스트
-│   └── fixtures/                 # 테스트 데이터
-├── docker/
-│   └── Dockerfile                # Docker 이미지
-└── deploy/
-    ├── cloudbuild.yaml           # CI/CD 설정
-    └── cloud-run.yaml            # Cloud Run 배포
+│   └── services/
+│       └── firestore-auth-enhanced.service.ts  # Firestore 인증 서비스
+├── package.json                  # 의존성 관리
+├── DOCS/
+│   ├── PRD.md                    # 제품 요구사항
+│   ├── TRD.md                    # 기술 요구사항 (이 문서)
+│   ├── ADR.md                    # 아키텍처 결정 기록
+│   ├── FIRESTORE_AUTH_TRD.md     # Firestore 인증 상세
+│   ├── FORMAT_PRESERVATION_TRD.md # 서식 보존 기능
+│   └── THREAD_SUPPORT_TRD.md     # 스레드 지원
+├── validate-env.sh               # 환경변수 검증 스크립트
+├── .env                          # 환경 설정
+└── README.md                     # 프로젝트 개요
+
+# 미래 확장 계획 (현재 미구현)
+# ├── tests/                     # 테스트 (향후 구현)
+# ├── docker/                    # Docker 설정 (향후 구현)
+# └── deploy/                    # 배포 스크립트 (향후 구현)
 ```
 
 ## 3. 기술 스택 상세 (Technology Stack)
 
-### 3.1 런타임 환경
+### 3.1 현재 구현 상태
 
-#### 3.1.1 Node.js 설정
+#### 3.1.1 실제 구현된 기술 스택
 ```json
 {
-  "name": "slack-ai-bot",
+  "name": "writerly",
   "version": "1.0.0",
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
-    "start": "node dist/app.js",
-    "dev": "nodemon src/app.ts",
-    "build": "tsc",
-    "test": "jest",
-    "lint": "eslint src/**/*.ts"
+    "start": "node simple-oauth-minimal.js",
+    "dev": "node simple-oauth-minimal.js",
+    "build": "echo 'No build needed for current implementation'",
+    "test": "echo 'Tests not implemented yet'",
+    "lint": "echo 'Linting not implemented yet'"
   },
   "dependencies": {
-    "@slack/bolt": "^3.14.0",
+    "@slack/web-api": "^7.0.0",
     "@google-cloud/vertexai": "^1.4.0",
-    "@google-cloud/tasks": "^4.0.0",
-    "@google-cloud/secret-manager": "^4.2.0",
-    "@google-cloud/logging": "^11.0.0",
-    "google-auth-library": "^9.0.0",
+    "@google-cloud/firestore": "^7.0.0",
     "express": "^4.18.0",
-    "express-rate-limit": "^7.1.0",
-    "ioredis": "^5.3.2",
-    "uuid": "^9.0.0",
-    "joi": "^17.9.0"
+    "axios": "^1.6.0"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
-    "@types/express": "^4.17.0",
-    "@types/uuid": "^9.0.0",
-    "@types/ioredis": "^5.3.0",
-    "typescript": "^5.0.0",
-    "jest": "^29.0.0",
-    "nodemon": "^3.0.0",
-    "eslint": "^8.0.0"
+    "@types/express": "^4.17.0"
   }
 }
 ```
 
-#### 3.1.2 TypeScript 설정
-```json
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
-    "lib": ["ES2020"],
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
-}
+#### 3.1.2 현재 구현 특징
+```javascript
+// 현재는 단일 JavaScript 파일로 구현
+// - TypeScript 미사용 (단순화)
+// - 빌드 프로세스 불필요
+// - 직접 Node.js 실행
+// - 최소한의 의존성
+
+// 핵심 구현된 기능:
+// ✅ Slack OAuth 2.0 인증
+// ✅ Vertex AI (Gemini 2.0) 통합
+// ✅ Firestore 영구 인증 저장
+// ✅ Express.js 웹서버
+// ✅ 기본 서식 보존
+// ✅ 스레드 지원
+// ✅ 헬스체크 엔드포인트
 ```
 
 ### 3.2 Vertex AI 통합 (TDD 및 클린 코드 적용)
@@ -431,94 +397,323 @@ export interface RequestMetrics {
 
 ### 3.3 인증 및 세션 관리
 
-#### 3.3.1 싱글턴 Redis를 사용한 OAuth 인증 (개선됨)
+#### 3.3.1 Firestore 기반 영구 인증 시스템 (현재 구현)
 ```typescript
-// src/services/session.service.ts
-import { redis } from '../config/redis'; // 싱글턴 인스턴스 사용
-import { encrypt, decrypt } from '../utils/crypto';
-import { logger } from '../utils/logger';
+// src/services/firestore-auth-enhanced.service.ts
+import { Firestore, Timestamp } from '@google-cloud/firestore';
+import * as crypto from 'crypto';
 
-export class SessionService {
-  // 싱글턴 Redis 인스턴스 사용 (생성자에서 별도 인스턴스 생성 안 함)
+export class EnhancedFirestoreAuthService {
+  private firestoreDB: Firestore | null = null;
+  private initializationError: Error | null = null;
+  private isInitialized = false;
+  private authCache: Map<string, CachedAuth> = new Map();
+  private encryptionKey: Buffer;
+
   constructor() {
-    // Redis 연결 상태 확인
-    if (redis.status !== 'ready') {
-      logger.warn('Redis 연결이 준비되지 않았습니다', { status: redis.status });
+    // 암호화 키 생성
+    this.encryptionKey = crypto.scryptSync(
+      process.env.ENCRYPTION_KEY || 'default-key',
+      'salt',
+      32
+    );
+  }
+
+  /**
+   * Firestore 초기화 및 연결 테스트
+   */
+  async initialize(): Promise<void> {
+    if (this.isInitialized) return;
+    
+    try {
+      const projectId = process.env.GCP_PROJECT_ID;
+      if (!projectId) {
+        throw new Error('GCP_PROJECT_ID is not set');
+      }
+
+      this.firestoreDB = new Firestore({ projectId });
+      
+      // 연결 테스트
+      await this.firestoreDB.collection('_health').doc('check').set({
+        timestamp: Date.now()
+      });
+      
+      this.isInitialized = true;
+      console.log('✅ Firestore 초기화 성공');
+    } catch (error) {
+      this.initializationError = error as Error;
+      console.error('❌ Firestore 초기화 실패:', error);
+      throw error;
     }
   }
-  
-  async createSession(
-    slackUserId: string,
-    workspaceId: string,
-    accessToken: string,
-    refreshToken: string
-  ): Promise<void> {
-    const sessionId = this.generateSessionId(slackUserId, workspaceId);
+
+  /**
+   * 인증 정보 저장 (반영구)
+   */
+  async storeAuth(userId: string, teamId: string, accessToken: string): Promise<void> {
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+
+    const docId = `${userId}_${teamId}`;
     
-    const sessionData = {
-      slackUserId,
-      workspaceId,
-      accessToken: encrypt(accessToken),
-      refreshToken: encrypt(refreshToken),
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 3600000).toISOString() // 1시간
+    // 토큰 암호화
+    const encryptedToken = this.encrypt(accessToken);
+    
+    const authData = {
+      access_token: encryptedToken,
+      created_at: Timestamp.now(),
+      last_used: Timestamp.now(),
+      metadata: {
+        app_version: process.env.APP_VERSION || '1.0.0',
+        ip_address: 'masked', // 개인정보 보호
+        last_activity: new Date().toISOString()
+      }
     };
-    
-    await redis.setex( // 싱글턴 인스턴스 사용
-      sessionId,
-      3600, // 1시간 TTL
-      JSON.stringify(sessionData)
-    );
-    
-    logger.info('세션 생성', { sessionId, slackUserId, workspaceId });
+
+    try {
+      // Firestore 저장
+      await this.firestoreDB!.collection('slack_auth').doc(docId).set(authData);
+      
+      // 메모리 캐시 업데이트
+      this.authCache.set(docId, {
+        access_token: accessToken, // 복호화된 상태로 캐시
+        cached_at: Date.now(),
+        ...authData
+      });
+      
+      console.log(`✅ Auth saved for user: ${userId}, team: ${teamId}`);
+    } catch (error) {
+      console.error('❌ Failed to save auth:', error);
+      throw error;
+    }
   }
-  
-  async getSession(
-    slackUserId: string,
-    workspaceId: string
-  ): Promise<SessionData | null> {
-    const sessionId = this.generateSessionId(slackUserId, workspaceId);
-    const sessionJson = await redis.get(sessionId); // 싱글턴 인스턴스 사용
+
+  /**
+   * 인증 정보 조회 (하이브리드 캐싱)
+   */
+  async getAuth(userId: string, teamId: string): Promise<string | null> {
+    const docId = `${userId}_${teamId}`;
     
-    if (!sessionJson) {
+    // 1. 메모리 캐시 확인
+    if (this.authCache.has(docId)) {
+      const cached = this.authCache.get(docId)!;
+      
+      // 캐시 만료 확인 (5분)
+      if (Date.now() - cached.cached_at < 300000) {
+        console.log(`📦 Auth retrieved from cache: ${userId}`);
+        
+        // 마지막 사용 시간 업데이트 (비동기)
+        this.updateLastUsed(docId).catch(console.error);
+        
+        return cached.access_token;
+      } else {
+        // 만료된 캐시 제거
+        this.authCache.delete(docId);
+      }
+    }
+
+    if (!this.isInitialized) {
+      console.error('❌ Firestore가 초기화되지 않았습니다');
       return null;
     }
+
+    try {
+      // 2. Firestore 조회
+      const doc = await this.firestoreDB!.collection('slack_auth').doc(docId).get();
+      
+      if (!doc.exists) {
+        console.log(`❌ No auth found for: ${userId}`);
+        return null;
+      }
+
+      const data = doc.data()!;
+      const decryptedToken = this.decrypt(data.access_token);
+      
+      // 메모리 캐시에 저장
+      this.authCache.set(docId, {
+        access_token: decryptedToken,
+        cached_at: Date.now(),
+        ...data
+      });
+      
+      // 마지막 사용 시간 업데이트
+      await this.updateLastUsed(docId);
+      
+      console.log(`✅ Auth retrieved from Firestore: ${userId}`);
+      return decryptedToken;
+      
+    } catch (error) {
+      console.error('❌ Failed to get auth:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 인증 확인 (재시도 로직 포함)
+   */
+  async isAuthenticated(userId: string, teamId: string, retryCount = 0): Promise<boolean> {
+    try {
+      const token = await this.getAuth(userId, teamId);
+      return !!token;
+    } catch (error) {
+      console.error('❌ 인증 확인 실패:', { userId, teamId, error, retryCount });
+      
+      // 자동 재시도 (최대 3회)
+      if (retryCount < 3) {
+        console.log(`🔄 인증 확인 재시도 ${retryCount + 1}/3`);
+        await this.delay(1000 * (retryCount + 1)); // 지수 백오프
+        return this.isAuthenticated(userId, teamId, retryCount + 1);
+      }
+      
+      return false;
+    }
+  }
+
+  /**
+   * 인증 삭제 (로그아웃)
+   */
+  async deleteAuth(userId: string, teamId: string): Promise<void> {
+    const docId = `${userId}_${teamId}`;
     
-    const sessionData = JSON.parse(sessionJson);
+    try {
+      if (this.isInitialized && this.firestoreDB) {
+        // Firestore 삭제
+        await this.firestoreDB.collection('slack_auth').doc(docId).delete();
+      }
+      
+      // 메모리 캐시 삭제
+      this.authCache.delete(docId);
+      
+      console.log(`✅ Auth deleted for: ${userId}`);
+    } catch (error) {
+      console.error('❌ Failed to delete auth:', error);
+    }
+  }
+
+  /**
+   * 마지막 사용 시간 업데이트
+   */
+  private async updateLastUsed(docId: string): Promise<void> {
+    if (!this.isInitialized || !this.firestoreDB) return;
     
-    // 세션 연장
-    await redis.expire(sessionId, 3600); // 싱글턴 인스턴스 사용
-    
+    try {
+      await this.firestoreDB.collection('slack_auth').doc(docId).update({
+        last_used: Timestamp.now(),
+        'metadata.last_activity': new Date().toISOString()
+      });
+    } catch (error) {
+      // 업데이트 실패는 조용히 처리
+      console.warn('Failed to update last_used:', error);
+    }
+  }
+
+  /**
+   * 토큰 암호화 (AES-256-CBC)
+   */
+  private encrypt(text: string): string {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', this.encryptionKey, iv);
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    return iv.toString('hex') + ':' + encrypted;
+  }
+
+  /**
+   * 토큰 복호화
+   */
+  private decrypt(encryptedText: string): string {
+    const parts = encryptedText.split(':');
+    const iv = Buffer.from(parts[0], 'hex');
+    const encrypted = parts[1];
+    const decipher = crypto.createDecipheriv('aes-256-cbc', this.encryptionKey, iv);
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  }
+
+  /**
+   * 캐시 통계 (디버깅용)
+   */
+  getCacheStats() {
     return {
-      ...sessionData,
-      accessToken: decrypt(sessionData.accessToken),
-      refreshToken: decrypt(sessionData.refreshToken)
+      size: this.authCache.size,
+      keys: Array.from(this.authCache.keys()),
+      isInitialized: this.isInitialized,
+      initializationError: this.initializationError?.message
     };
   }
-  
-  async deleteSession(
-    slackUserId: string,
-    workspaceId: string
-  ): Promise<void> {
-    const sessionId = this.generateSessionId(slackUserId, workspaceId);
-    await redis.del(sessionId); // 싱글턴 인스턴스 사용
-    
-    logger.info('세션 삭제', { sessionId, slackUserId, workspaceId });
+
+  /**
+   * 캐시 초기화
+   */
+  clearCache() {
+    this.authCache.clear();
+    console.log('✅ Memory cache cleared');
   }
-  
-  private generateSessionId(slackUserId: string, workspaceId: string): string {
-    return `session:${slackUserId}:${workspaceId}`;
+
+  /**
+   * 지연 유틸리티
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
-export interface SessionData {
-  slackUserId: string;
-  workspaceId: string;
-  accessToken: string;
-  refreshToken: string;
-  createdAt: string;
-  expiresAt: string;
+// 캐시 인터페이스
+interface CachedAuth {
+  access_token: string;
+  cached_at: number;
+  created_at?: any;
+  last_used?: any;
+  metadata?: any;
 }
+
+// 싱글톤 인스턴스 export
+export const authService = new EnhancedFirestoreAuthService();
+```
+
+#### 3.3.2 환경 변수 검증 시스템
+```bash
+#!/bin/bash
+# validate-env.sh - 환경 변수 자동 검증 스크립트
+
+echo "🔍 환경 변수 검증 시작..."
+
+# Bot Token 검증
+if [[ -z "$SLACK_BOT_TOKEN" ]]; then
+  echo "❌ SLACK_BOT_TOKEN이 설정되지 않았습니다!"
+  exit 1
+elif [[ ! "$SLACK_BOT_TOKEN" =~ ^xoxb- ]]; then
+  echo "❌ SLACK_BOT_TOKEN이 올바른 형식이 아닙니다 (xoxb-로 시작해야 함)"
+  exit 1
+fi
+
+# GCP Project ID 검증
+if [[ -z "$GCP_PROJECT_ID" ]]; then
+  echo "❌ GCP_PROJECT_ID가 설정되지 않았습니다!"
+  exit 1
+fi
+
+# 암호화 키 검증
+if [[ -z "$ENCRYPTION_KEY" ]]; then
+  echo "❌ ENCRYPTION_KEY가 설정되지 않았습니다!"
+  exit 1
+fi
+
+# Firestore 연결 테스트
+echo "🔍 Firestore 연결 테스트 중..."
+gcloud firestore operations list --project="$GCP_PROJECT_ID" --limit=1 &>/dev/null
+if [[ $? -ne 0 ]]; then
+  echo "❌ Firestore에 접근할 수 없습니다. 프로젝트 ID와 권한을 확인하세요."
+  exit 1
+fi
+
+echo "✅ 모든 환경 변수가 올바르게 설정되었습니다!"
+echo "📊 인증 시스템 준비 완료:"
+echo "  - Firestore 프로젝트: $GCP_PROJECT_ID"
+echo "  - Bot Token: xoxb-***${SLACK_BOT_TOKEN: -4}"
+echo "  - 암호화: AES-256-CBC 준비됨"
 ```
 
 #### 3.3.2 암호화 유틸리티
@@ -568,7 +763,7 @@ export function decrypt(encryptedText: string): string {
 }
 ```
 
-### 3.3 슬래시 커맨드 처리
+### 3.4 슬래시 커맨드 처리
 
 #### 3.3.1 Slack 컨트롤러 구현 (추적 ID 로깅 강화)
 ```typescript
@@ -729,7 +924,7 @@ export class SlackController {
 }
 ```
 
-### 3.4 큐 시스템 및 오류 처리 전략
+### 3.5 큐 시스템 및 오류 처리 전략
 
 #### 3.4.1 OIDC 토큰 기반 Cloud Tasks 구현 (보안 강화)
 ```typescript
@@ -1141,6 +1336,838 @@ echo "   - 최대 재시도: 5회"
 echo "   - 재시도 기간: 10분"
 echo "   - 백오프: 10초 ~ 5분 (지수 증가)"
 echo "   - 재시도 조건: 5xx 응답, 네트워크 오류"
+```
+
+### 3.6 스레드 기반 AI 상호작용 구현
+
+#### 3.6.1 Slack Events API 핸들러 (Production-Ready)
+```typescript
+// src/handlers/slack-events.handler.ts
+import { Request, Response } from 'express';
+import { createHmac, timingSafeEqual } from 'crypto';
+import { authService } from '../services/firestore-auth-enhanced.service';
+import { MessageUpdater } from '../services/message-updater.service';
+import { MentionParser } from '../parsers/mention.parser';
+
+interface SlackEventPayload {
+  type: 'url_verification' | 'event_callback';
+  challenge?: string;
+  event?: SlackAppMentionEvent;
+  team_id?: string;
+}
+
+interface SlackAppMentionEvent {
+  type: 'app_mention';
+  user: string;
+  text: string;
+  ts: string;
+  channel: string;
+  team: string;
+  thread_ts?: string;
+}
+
+export class SlackEventsHandler {
+  private readonly signingSecret: string;
+  private readonly botUserId: string;
+  private readonly messageUpdater: MessageUpdater;
+  private readonly mentionParser: MentionParser;
+
+  constructor() {
+    this.signingSecret = process.env.SLACK_SIGNING_SECRET!;
+    this.botUserId = process.env.SLACK_BOT_USER_ID!;
+    this.messageUpdater = new MessageUpdater();
+    this.mentionParser = new MentionParser(this.botUserId);
+  }
+
+  /**
+   * Slack Events API 요청 검증
+   */
+  private verifySlackRequest(req: Request): boolean {
+    const signature = req.headers['x-slack-signature'] as string;
+    const timestamp = req.headers['x-slack-request-timestamp'] as string;
+    const body = req.body;
+
+    // Replay attack 방지 (5분 이내 요청만 허용)
+    const currentTime = Math.floor(Date.now() / 1000);
+    if (Math.abs(currentTime - parseInt(timestamp)) > 300) {
+      console.warn('Slack request timestamp too old', { 
+        timestamp, 
+        currentTime,
+        diff: currentTime - parseInt(timestamp)
+      });
+      return false;
+    }
+
+    // HMAC-SHA256 서명 검증
+    const baseString = `v0:${timestamp}:${JSON.stringify(body)}`;
+    const expectedSignature = 'v0=' + createHmac('sha256', this.signingSecret)
+      .update(baseString)
+      .digest('hex');
+
+    try {
+      return timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expectedSignature)
+      );
+    } catch (error) {
+      console.error('Signature verification failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 메인 이벤트 핸들러
+   */
+  public async handle(req: Request, res: Response): Promise<void> {
+    // 1. 서명 검증
+    if (!this.verifySlackRequest(req)) {
+      res.status(401).json({ error: 'Invalid signature' });
+      return;
+    }
+
+    const payload = req.body as SlackEventPayload;
+
+    // 2. URL 검증 처리
+    if (payload.type === 'url_verification') {
+      res.status(200).json({ challenge: payload.challenge });
+      return;
+    }
+
+    // 3. 즉시 200 응답 (Slack 타임아웃 방지)
+    res.status(200).json({ ok: true });
+
+    // 4. 비동기 이벤트 처리
+    if (payload.type === 'event_callback' && payload.event?.type === 'app_mention') {
+      await this.processAppMention(payload.event);
+    }
+  }
+
+  /**
+   * App Mention 이벤트 처리
+   */
+  private async processAppMention(event: SlackAppMentionEvent): Promise<void> {
+    const { user: userId, text, ts: messageTs, channel, team: teamId } = event;
+    
+    const processingStartTime = Date.now();
+    console.log('🎯 App mention received:', { 
+      userId, 
+      teamId, 
+      channel, 
+      messageTs,
+      textPreview: text.substring(0, 100) + '...'
+    });
+
+    try {
+      // Step 1: 사용자 인증 확인
+      const userToken = await authService.getAuth(userId, teamId);
+      if (!userToken) {
+        console.log('❌ Authentication required for user:', userId);
+        return;
+      }
+
+      // Step 2: 멘션 명령어 파싱
+      const parsedCommand = this.mentionParser.parse(text);
+      if (!parsedCommand) {
+        console.log('❌ Command parsing failed:', { userId, text });
+        return;
+      }
+
+      // Step 3: 즉시 "처리 중" 상태로 메시지 업데이트
+      const processingMessage = this.generateProcessingMessage(parsedCommand);
+      await this.messageUpdater.update(userToken, channel, messageTs, processingMessage);
+      
+      const initialUpdateTime = Date.now() - processingStartTime;
+      console.log('⏳ Initial message updated:', { 
+        userId, 
+        channel, 
+        messageTs, 
+        updateLatency: `${initialUpdateTime}ms` 
+      });
+
+      // Step 4: 직접 AI 처리 (현재 구현)
+      const vertexAI = new (await import('../services/vertexai.service')).VertexAIService();
+      const aiResponse = await vertexAI.generateResponse(
+        parsedCommand.task,
+        parsedCommand.data
+      );
+
+      // Step 5: 최종 결과로 메시지 업데이트
+      await this.messageUpdater.update(userToken, channel, messageTs, aiResponse.text);
+      
+      console.log('✅ App mention processing completed:', { 
+        userId, 
+        totalTime: `${Date.now() - processingStartTime}ms` 
+      });
+
+    } catch (error) {
+      console.error('❌ App mention processing failed:', {
+        error: error.message,
+        stack: error.stack,
+        userId,
+        channel,
+        messageTs
+      });
+
+      // 오류 발생 시 메시지 업데이트
+      const errorMessage = '❌ 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+      const userToken = await authService.getAuth(userId, teamId);
+      if (userToken) {
+        await this.messageUpdater.update(userToken, channel, messageTs, errorMessage);
+      }
+    }
+  }
+
+  /**
+   * 처리 중 메시지 생성
+   */
+  private generateProcessingMessage(parsedCommand: ParsedCommand): string {
+    const taskEmoji = this.getTaskEmoji(parsedCommand.task);
+    const estimatedTime = this.estimateProcessingTime(parsedCommand);
+    
+    return `${taskEmoji} AI가 "${parsedCommand.task}" 작업을 처리하고 있습니다...\n\n` +
+           `⏱️ 예상 소요 시간: ${estimatedTime}초\n` +
+           `📝 처리 중인 내용: ${parsedCommand.data.substring(0, 100)}${parsedCommand.data.length > 100 ? '...' : ''}`;
+  }
+
+  private getTaskEmoji(task: string): string {
+    const taskLower = task.toLowerCase();
+    if (taskLower.includes('번역') || taskLower.includes('translate')) return '🌐';
+    if (taskLower.includes('요약') || taskLower.includes('summary')) return '📋';
+    if (taskLower.includes('분석') || taskLower.includes('analyze')) return '🔍';
+    if (taskLower.includes('생성') || taskLower.includes('generate')) return '✨';
+    return '🤖';
+  }
+
+  private estimateProcessingTime(parsedCommand: ParsedCommand): number {
+    const contentLength = parsedCommand.data.length;
+    if (contentLength < 500) return 5;
+    if (contentLength < 2000) return 10;
+    if (contentLength < 5000) return 15;
+    return 20;
+  }
+}
+
+// 데이터 인터페이스
+interface ParsedCommand {
+  task: string;
+  data: string;
+  confidence?: number;
+}
+```
+
+#### 3.6.2 멘션 파서 (Advanced Pattern Matching)
+```typescript
+// src/parsers/mention.parser.ts
+import { FormatMetadata } from '../formatters/FormatDetector';
+import { formatDetector } from '../formatters/FormatDetector';
+
+export interface ParsedCommand {
+  task: string;
+  data: string;
+  confidence: number;
+  formatMetadata: FormatMetadata;
+  parsingMethod: 'quoted' | 'natural' | 'contextual';
+}
+
+export class MentionParser {
+  private readonly botMentionRegex: RegExp;
+  private readonly quotedPatterns: RegExp[];
+  private readonly naturalPatterns: RegExp[];
+
+  constructor(botUserId: string) {
+    this.botMentionRegex = new RegExp(`^<@${botUserId}>\\s*`, 'i');
+    
+    // 다양한 인용 패턴 지원
+    this.quotedPatterns = [
+      /^"([^"]+)"\s+"([^"]+)"$/s,           // "task" "data"
+      /^"([^"]+)"\s+```([^`]+)```$/s,       // "task" ```data```
+      /^"([^"]+)"\s+(.+)$/s,               // "task" freeform
+      /^'([^']+)'\s+'([^']+)'$/s,          // 'task' 'data'
+    ];
+
+    // 자연어 패턴
+    this.naturalPatterns = [
+      /^(.+?)(?:해줘|해주세요|하라|하세요)[:：]\s*(.+)$/s,  // "번역해줘: content"
+      /^(.+?)(?:로|으로)\s+(.+)$/s,                      // "영어로 content"
+      /^(.+?)\s*-\s*(.+)$/s,                           // "task - content"
+    ];
+  }
+
+  /**
+   * 멘션 메시지 파싱
+   */
+  public parse(text: string): ParsedCommand | null {
+    const cleanText = this.removeBotMention(text);
+    if (!cleanText) return null;
+
+    // 1. Quoted 패턴 시도
+    const quotedResult = this.tryQuotedPatterns(cleanText);
+    if (quotedResult) return quotedResult;
+
+    // 2. Natural 패턴 시도
+    const naturalResult = this.tryNaturalPatterns(cleanText);
+    if (naturalResult) return naturalResult;
+
+    // 3. Contextual 패턴 시도 (향후 확장)
+    const contextualResult = this.tryContextualPatterns(cleanText);
+    if (contextualResult) return contextualResult;
+
+    return null;
+  }
+
+  private removeBotMention(text: string): string | null {
+    const match = text.match(this.botMentionRegex);
+    if (!match) return null;
+    
+    return text.replace(this.botMentionRegex, '').trim();
+  }
+
+  private tryQuotedPatterns(text: string): ParsedCommand | null {
+    for (const pattern of this.quotedPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1] && match[2]) {
+        return {
+          task: match[1].trim(),
+          data: match[2].trim(),
+          confidence: 0.95,
+          formatMetadata: formatDetector.analyze(match[2]),
+          parsingMethod: 'quoted'
+        };
+      }
+    }
+    return null;
+  }
+
+  private tryNaturalPatterns(text: string): ParsedCommand | null {
+    for (const pattern of this.naturalPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1] && match[2]) {
+        const task = this.normalizeTask(match[1].trim());
+        return {
+          task,
+          data: match[2].trim(),
+          confidence: 0.8,
+          formatMetadata: formatDetector.analyze(match[2]),
+          parsingMethod: 'natural'
+        };
+      }
+    }
+    return null;
+  }
+
+  private tryContextualPatterns(text: string): ParsedCommand | null {
+    // 향후 구현: "위 내용을 요약해줘", "이전 메시지를 번역해줘" 등
+    return null;
+  }
+
+  private normalizeTask(rawTask: string): string {
+    const taskMap: Record<string, string> = {
+      '번역해줘': '번역',
+      '번역해주세요': '번역',
+      '영어로': '영어로 번역',
+      '한국어로': '한국어로 번역',
+      '요약해줘': '요약',
+      '요약해주세요': '요약',
+      '분석해줘': '분석',
+      '분석해주세요': '분석',
+    };
+
+    return taskMap[rawTask] || rawTask;
+  }
+
+  /**
+   * 파싱 품질 검증
+   */
+  public validateParsedCommand(command: ParsedCommand): boolean {
+    if (command.confidence < 0.5) return false;
+    if (command.task.length < 1 || command.task.length > 100) return false;
+    if (command.data.length < 1 || command.data.length > 10000) return false;
+    
+    return true;
+  }
+}
+```
+
+#### 3.6.3 메시지 업데이터 (Enterprise-Grade)
+```typescript
+// src/services/message-updater.service.ts
+import { WebClient, ErrorCode } from '@slack/web-api';
+
+export interface MessageUpdateResult {
+  success: boolean;
+  error?: string;
+  retryable?: boolean;
+  updatedAt?: string;
+}
+
+export class MessageUpdater {
+  private readonly rateLimiter: Map<string, number> = new Map();
+  private readonly maxRetries = 3;
+  private readonly baseDelayMs = 1000;
+
+  /**
+   * 메시지 업데이트 (재시도 로직 포함)
+   */
+  public async update(
+    userToken: string, 
+    channel: string, 
+    ts: string, 
+    text: string,
+    retryCount = 0
+  ): Promise<MessageUpdateResult> {
+    try {
+      // Rate limiting 체크
+      await this.enforceRateLimit(userToken);
+
+      // Slack Web API 클라이언트 생성
+      const slackClient = new WebClient(userToken);
+
+      // 메시지 업데이트 실행
+      const result = await slackClient.chat.update({
+        channel,
+        ts,
+        text,
+        as_user: true,
+        parse: 'full',
+        link_names: true,
+      });
+
+      console.log('✅ Message updated successfully:', {
+        channel,
+        ts,
+        textLength: text.length,
+        ok: result.ok
+      });
+
+      return {
+        success: true,
+        updatedAt: new Date().toISOString()
+      };
+
+    } catch (error: any) {
+      console.error('❌ Message update failed:', {
+        error: error.message,
+        code: error.code,
+        channel,
+        ts,
+        retryCount
+      });
+
+      return this.handleUpdateError(error, userToken, channel, ts, text, retryCount);
+    }
+  }
+
+  /**
+   * 오류 처리 및 재시도 로직
+   */
+  private async handleUpdateError(
+    error: any,
+    userToken: string,
+    channel: string,
+    ts: string,
+    text: string,
+    retryCount: number
+  ): Promise<MessageUpdateResult> {
+    const errorCode = error.code as ErrorCode;
+
+    // 토큰 관련 오류 (재시도 불가)
+    if (errorCode === ErrorCode.TokenRevoked || 
+        errorCode === ErrorCode.InvalidAuth ||
+        errorCode === ErrorCode.NotAuthed) {
+      
+      return {
+        success: false,
+        error: 'Token revoked or invalid',
+        retryable: false
+      };
+    }
+
+    // Rate limiting 오류 (재시도 가능)
+    if (errorCode === ErrorCode.RateLimited) {
+      const retryAfter = this.extractRetryAfter(error) || 60;
+      console.log(`Rate limited, retrying after ${retryAfter} seconds`);
+      
+      await this.delay(retryAfter * 1000);
+      return this.update(userToken, channel, ts, text, retryCount + 1);
+    }
+
+    // 일반적인 네트워크 오류 등 (재시도 가능)
+    if (retryCount < this.maxRetries) {
+      const delayMs = this.baseDelayMs * Math.pow(2, retryCount); // Exponential backoff
+      console.log(`Retrying message update in ${delayMs}ms (attempt ${retryCount + 1}/${this.maxRetries})`);
+      
+      await this.delay(delayMs);
+      return this.update(userToken, channel, ts, text, retryCount + 1);
+    }
+
+    // 최대 재시도 횟수 초과
+    return {
+      success: false,
+      error: `Max retries (${this.maxRetries}) exceeded: ${error.message}`,
+      retryable: false
+    };
+  }
+
+  /**
+   * Rate limiting 적용
+   */
+  private async enforceRateLimit(userToken: string): Promise<void> {
+    const now = Date.now();
+    const lastCall = this.rateLimiter.get(userToken) || 0;
+    const timeSinceLastCall = now - lastCall;
+    const minInterval = 1000; // 1초 간격
+
+    if (timeSinceLastCall < minInterval) {
+      const waitTime = minInterval - timeSinceLastCall;
+      console.log(`Rate limiting: waiting ${waitTime}ms`);
+      await this.delay(waitTime);
+    }
+
+    this.rateLimiter.set(userToken, Date.now());
+  }
+
+  private extractRetryAfter(error: any): number | null {
+    return error.headers?.['retry-after'] ? parseInt(error.headers['retry-after']) : null;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+```
+
+### 3.7 서식 보존 시스템 구현
+
+#### 3.7.1 고급 Slack 파서 (Format-Aware)
+```typescript
+// src/parsers/AdvancedSlackParser.ts
+export interface ParsedCommand {
+  task: string;
+  content: string;
+  metadata: FormatMetadata;
+  rawInput: string;
+}
+
+export interface FormatMetadata {
+  hasLineBreaks: boolean;
+  hasBoldText: boolean;
+  hasItalicText: boolean;
+  hasCodeBlocks: boolean;
+  hasLists: boolean;
+  hasLinks: boolean;
+  complexity: 'simple' | 'moderate' | 'complex';
+}
+
+export class AdvancedSlackParser {
+  /**
+   * 서식이 포함된 명령어 파싱
+   */
+  parse(input: string): ParsedCommand | null {
+    // 1. 기본 따옴표 패턴 매칭
+    const match = input.match(/^\/ai\s+"([^"]+)"\s+"(.+)"$/s);
+    if (!match) return null;
+
+    const task = match[1].trim();
+    const content = match[2];
+
+    // 2. 서식 메타데이터 추출
+    const metadata = this.detectFormat(content);
+
+    // 3. 구조 보존된 콘텐츠 생성
+    const preservedContent = this.preserveStructure(content);
+
+    return {
+      task,
+      content: preservedContent,
+      metadata,
+      rawInput: input
+    };
+  }
+
+  /**
+   * 서식 감지 및 분석
+   */
+  detectFormat(content: string): FormatMetadata {
+    const metadata: FormatMetadata = {
+      hasLineBreaks: /\n/.test(content),
+      hasBoldText: /\*[^*]+\*/.test(content),
+      hasItalicText: /_[^_]+_/.test(content),
+      hasCodeBlocks: /`[^`]+`|```[\s\S]*?```/.test(content),
+      hasLists: /^[\s]*[•\-\*\d+\.]\s/.test(content),
+      hasLinks: /<[^>]+\|[^>]+>/.test(content),
+      complexity: 'simple'
+    };
+
+    // 복잡도 계산
+    const complexityScore = [
+      metadata.hasLineBreaks,
+      metadata.hasBoldText,
+      metadata.hasItalicText,
+      metadata.hasCodeBlocks,
+      metadata.hasLists,
+      metadata.hasLinks
+    ].filter(Boolean).length;
+
+    if (complexityScore >= 4) metadata.complexity = 'complex';
+    else if (complexityScore >= 2) metadata.complexity = 'moderate';
+
+    return metadata;
+  }
+
+  /**
+   * 구조 보존 처리
+   */
+  preserveStructure(content: string): string {
+    // 1. 줄바꿈 보존 (이중 줄바꿈은 단락으로 인식)
+    let preserved = content.replace(/\n\n/g, '\n\n[PARAGRAPH_BREAK]\n\n');
+    
+    // 2. 리스트 구조 보존
+    preserved = preserved.replace(/^([\s]*)([-*•]|\d+\.)\s(.+)$/gm, 
+      '$1[LIST_ITEM:$2] $3');
+    
+    // 3. 코드 블록 보존
+    preserved = preserved.replace(/```([\s\S]*?)```/g, 
+      '[CODE_BLOCK]$1[/CODE_BLOCK]');
+    
+    // 4. 인라인 코드 보존
+    preserved = preserved.replace(/`([^`]+)`/g, '[INLINE_CODE]$1[/INLINE_CODE]');
+    
+    // 5. 볼드/이탤릭 마커 보존
+    preserved = preserved.replace(/\*([^*]+)\*/g, '[BOLD]$1[/BOLD]');
+    preserved = preserved.replace(/_([^_]+)_/g, '[ITALIC]$1[/ITALIC]');
+
+    return preserved;
+  }
+}
+```
+
+#### 3.7.2 서식 인식 AI 프롬프트 생성기
+```typescript
+// src/prompts/FormatAwarePrompts.ts
+export interface PromptConfig {
+  task: string;
+  content: string;
+  metadata: FormatMetadata;
+  preservationLevel: 'strict' | 'adaptive' | 'enhanced';
+}
+
+export class FormatAwarePromptGenerator {
+  /**
+   * 서식 보존 프롬프트 생성
+   */
+  generatePrompt(config: PromptConfig): string {
+    const baseInstruction = this.getTaskSpecificInstructions(config.task);
+    const formatInstructions = this.buildFormatPreservationInstructions(config.metadata);
+    
+    const promptTemplate = `${baseInstruction}
+
+${formatInstructions}
+
+원본 서식이 포함된 콘텐츠:
+${config.content}
+
+위 콘텐츠의 서식과 구조를 정확히 보존하면서 "${config.task}" 작업을 수행하세요.
+응답은 Slack 마크다운 형식으로 제공하고, 원본과 동일한 수준의 서식 품질을 유지하세요.`;
+
+    return promptTemplate;
+  }
+
+  /**
+   * 작업별 맞춤 지시사항
+   */
+  getTaskSpecificInstructions(task: string): string {
+    const taskLower = task.toLowerCase();
+    
+    if (taskLower.includes('번역')) {
+      return `텍스트를 번역할 때:
+- 모든 서식 마커(*볼드*, _이탤릭_, \`코드\`)를 정확히 유지하세요
+- 줄바꿈과 단락 구조를 그대로 보존하세요
+- 리스트의 계층 구조와 번호를 유지하세요
+- 코드 블록은 번역하지 말고 그대로 유지하세요`;
+    }
+    
+    if (taskLower.includes('요약')) {
+      return `내용을 요약할 때:
+- 원본의 핵심 구조(제목, 리스트, 단락)를 유지하세요
+- 중요한 서식(볼드, 코드)은 보존하세요
+- 요약하면서도 가독성을 높이는 서식을 적절히 활용하세요`;
+    }
+    
+    if (taskLower.includes('문법') || taskLower.includes('교정')) {
+      return `문법을 검토하고 교정할 때:
+- 서식은 절대 변경하지 마세요
+- 텍스트 내용만 수정하고 모든 마크다운은 원본 그대로 유지하세요
+- 코드 블록과 인라인 코드는 교정 대상에서 제외하세요`;
+    }
+    
+    return `작업을 수행할 때:
+- 원본의 모든 서식을 정확히 보존하세요
+- 구조적 요소(줄바꿈, 리스트, 제목)를 유지하세요
+- 응답의 가독성을 높이되 원본 스타일을 해치지 마세요`;
+  }
+
+  /**
+   * 서식 보존 지시사항 생성
+   */
+  buildFormatPreservationInstructions(metadata: FormatMetadata): string {
+    const instructions: string[] = [];
+    
+    if (metadata.hasLineBreaks) {
+      instructions.push('- 모든 줄바꿈과 단락 구조를 정확히 보존하세요');
+    }
+    
+    if (metadata.hasBoldText) {
+      instructions.push('- 볼드 텍스트(*text*)의 위치와 범위를 유지하세요');
+    }
+    
+    if (metadata.hasItalicText) {
+      instructions.push('- 이탤릭 텍스트(_text_)의 위치와 범위를 유지하세요');
+    }
+    
+    if (metadata.hasCodeBlocks) {
+      instructions.push('- 코드 블록(\`\`\`code\`\`\`)과 인라인 코드(\`code\`)를 정확히 보존하세요');
+    }
+    
+    if (metadata.hasLists) {
+      instructions.push('- 리스트의 계층 구조와 불릿 스타일을 유지하세요');
+    }
+    
+    if (metadata.hasLinks) {
+      instructions.push('- 링크 형식과 텍스트를 보존하세요');
+    }
+
+    const complexityNote = metadata.complexity === 'complex' 
+      ? '\n⚠️ 복잡한 서식이 포함되어 있습니다. 특히 신중하게 보존하세요.'
+      : '';
+
+    return `서식 보존 요구사항:
+${instructions.join('\n')}${complexityNote}`;
+  }
+}
+```
+
+#### 3.7.3 Slack 응답 포맷터
+```typescript
+// src/formatters/SlackResponseFormatter.ts
+export interface FormattingOptions {
+  maxLength: number;
+  preserveOriginalStructure: boolean;
+  enhanceReadability: boolean;
+  addStructuralElements: boolean;
+}
+
+export class SlackResponseFormatter {
+  /**
+   * AI 응답을 Slack 마크다운으로 변환
+   */
+  format(aiResponse: string, originalMetadata: FormatMetadata): string {
+    let formatted = aiResponse;
+
+    // 1. 기본 마크다운 변환
+    formatted = this.convertToSlackMarkdown(formatted);
+
+    // 2. 구조적 요소 복원
+    formatted = this.restoreStructuralElements(formatted);
+
+    // 3. 가독성 향상 (선택적)
+    if (originalMetadata.complexity === 'complex') {
+      formatted = this.enhanceReadability(formatted);
+    }
+
+    // 4. 길이 제한 처리
+    formatted = this.handleLengthLimits(formatted);
+
+    return formatted;
+  }
+
+  /**
+   * 일반 마크다운을 Slack 형식으로 변환
+   */
+  convertToSlackMarkdown(text: string): string {
+    let converted = text;
+
+    // 볼드: **text** → *text*
+    converted = converted.replace(/\*\*([^*]+)\*\*/g, '*$1*');
+    
+    // 이탤릭: _text_ (그대로 유지)
+    
+    // 코드 블록: ```code``` (그대로 유지)
+    
+    // 인라인 코드: `code` (그대로 유지)
+    
+    // 리스트: - item → • item
+    converted = converted.replace(/^(\s*)- /gm, '$1• ');
+    
+    // 숫자 리스트는 그대로 유지
+    
+    return converted;
+  }
+
+  /**
+   * 보존된 구조적 요소 복원
+   */
+  restoreStructuralElements(text: string): string {
+    let restored = text;
+
+    // 단락 구분자 복원
+    restored = restored.replace(/\[PARAGRAPH_BREAK\]/g, '');
+    
+    // 리스트 아이템 복원
+    restored = restored.replace(/\[LIST_ITEM:([^\]]+)\]/g, '$1');
+    
+    // 코드 블록 복원
+    restored = restored.replace(/\[CODE_BLOCK\]([\s\S]*?)\[\/CODE_BLOCK\]/g, '```$1```');
+    
+    // 인라인 코드 복원
+    restored = restored.replace(/\[INLINE_CODE\]([^\]]+)\[\/INLINE_CODE\]/g, '`$1`');
+    
+    // 볼드/이탤릭 복원
+    restored = restored.replace(/\[BOLD\]([^\]]+)\[\/BOLD\]/g, '*$1*');
+    restored = restored.replace(/\[ITALIC\]([^\]]+)\[\/ITALIC\]/g, '_$1_');
+
+    return restored;
+  }
+
+  /**
+   * 가독성 향상
+   */
+  enhanceReadability(text: string): string {
+    let enhanced = text;
+
+    // 긴 단락을 적절히 분할
+    enhanced = enhanced.replace(/(.{200,}?)([.!?])\s+/g, '$1$2\n\n');
+    
+    // 리스트 앞뒤에 여백 추가
+    enhanced = enhanced.replace(/(\n)(•|\d+\.)/g, '$1\n$2');
+    
+    // 코드 블록 앞뒤에 여백 추가
+    enhanced = enhanced.replace(/(\n)```/g, '$1\n```');
+    enhanced = enhanced.replace(/```(\n)/g, '```\n$1');
+
+    return enhanced;
+  }
+
+  /**
+   * 길이 제한 처리
+   */
+  handleLengthLimits(text: string): string {
+    const MAX_SLACK_MESSAGE_LENGTH = 4000;
+    
+    if (text.length <= MAX_SLACK_MESSAGE_LENGTH) {
+      return text;
+    }
+
+    // 메시지가 너무 길면 적절히 분할
+    const truncated = text.substring(0, MAX_SLACK_MESSAGE_LENGTH - 100);
+    const lastNewline = truncated.lastIndexOf('\n');
+    
+    if (lastNewline > MAX_SLACK_MESSAGE_LENGTH * 0.8) {
+      return truncated.substring(0, lastNewline) + '\n\n📝 *[메시지가 길어 일부가 생략되었습니다]*';
+    }
+
+    return truncated + '\n\n📝 *[메시지가 길어 일부가 생략되었습니다]*';
+  }
+}
 ```
 
 ## 4. 데이터 저장 전략 (Data Storage Strategy)

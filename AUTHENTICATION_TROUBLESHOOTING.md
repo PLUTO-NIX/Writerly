@@ -1,4 +1,4 @@
-# Writerly 2 Authentication Troubleshooting Guide
+# Writerly Authentication Troubleshooting Guide
 
 ## 🚨 Current Issues
 1. First /ai command shows error from bot
