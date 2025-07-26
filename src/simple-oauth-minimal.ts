@@ -6,8 +6,8 @@ import { AdvancedSlackParser, ParsedCommand, FormatMetadata } from './parsers/Ad
 import { FormatDetector } from './formatters/FormatDetector';
 import { FormatAwarePrompts, PromptConfig } from './prompts/FormatAwarePrompts';
 
-// Firestore 기반 인증 서비스
-import { authService } from './services/firestore-auth.service';
+// Firestore 기반 인증 서비스 - 강화된 버전
+import { enhancedAuthService as authService } from './services/firestore-auth-enhanced.service';
 
 // Thread Support - Slack Events API 핸들러
 import { SlackEventsHandler } from './handlers/slack-events.handler';
@@ -394,23 +394,34 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Firestore Auth Health check
+// Enhanced Firestore Auth Health check
 app.get('/health/auth', async (req, res) => {
   try {
-    // Firestore 연결 테스트
-    const testDoc = await authService.firestoreDB
-      .collection('health')
-      .doc('check')
-      .get();
-    
+    const serviceHealth = authService.getServiceHealth();
     const cacheStats = authService.getCacheStats();
+    
+    // 초기화가 아직 안 된 경우 잠시 대기
+    if (!serviceHealth.initialized) {
+      const isReady = await authService.waitForInitialization(5000);
+      if (!isReady) {
+        return res.status(503).json({
+          status: 'unhealthy',
+          firestore: 'initialization_failed',
+          serviceHealth,
+          cache: cacheStats,
+          error: serviceHealth.lastError,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
     
     res.json({
       status: 'healthy',
       firestore: 'connected',
       cache: cacheStats,
       encryption: 'enabled',
-      auth_service: 'operational',
+      auth_service: 'enhanced_operational',
+      serviceHealth,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
