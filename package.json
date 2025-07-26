@@ -9,6 +9,7 @@
     "start": "node dist/simple-oauth-minimal.js",
     "dev": "nodemon src/simple-oauth-minimal.ts",
     "build": "tsc",
+    "validate": "ts-node validate.ts",
     "clean": "rm -rf dist",
     "test": "jest",
     "test:watch": "jest --watch",
